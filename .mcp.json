@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "memtune": {
+      "command": "python3",
+      "args": ["-I", "/home/josemanosalvas/Developer/memtune/memtune/mcp_server.py"]
+    }
+  }
+}
