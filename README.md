@@ -1,7 +1,8 @@
 <h1 align="center">
   <picture>
     <source media="(prefers-color-scheme: dark)" srcset="docs/brand/lockup-animated-light.svg">
-    <img alt="ctune" src="docs/brand/lockup-animated-dark.svg" width="440">
+    <source media="(prefers-color-scheme: light)" srcset="docs/brand/lockup-animated-dark.svg">
+    <img alt="ctune" src="docs/brand/lockup-animated.svg" width="440">
   </picture>
 </h1>
 

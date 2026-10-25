@@ -12,6 +12,9 @@ sys.path.insert(0, str(OUT.parents[1]))
 from ctune import mascot as m  # noqa: E402
 
 INK = {"dark": "#141413", "light": "#F4EDE4"}
+# Ink that follows the viewer's colour scheme, for renderers that ignore <picture> (editor previews, apps).
+ADAPTIVE = {**m.PAL, "i": None}
+INK_CSS = f".i{{fill:{INK['dark']}}}@media (prefers-color-scheme:dark){{.i{{fill:{INK['light']}}}}}"
 BG_DARK = "#141413"
 
 
@@ -34,7 +37,8 @@ def _rects(px, pal):
             run = 1
             while xs.get(x + run) == xs[x]:
                 run += 1
-            out.append(f'<rect x="{x}" y="{y}" width="{run}" height="1" fill="{pal[xs[x]]}"/>')
+            paint = 'class="i"' if pal[xs[x]] is None else f'fill="{pal[xs[x]]}"'
+            out.append(f'<rect x="{x}" y="{y}" width="{run}" height="1" {paint}/>')
     return out
 
 
@@ -44,7 +48,8 @@ def _svg_open(w, h, scale=16):
 
 
 def to_svg(s, path, pal=m.PAL):
-    path.write_text("\n".join([_svg_open(s.w, s.h), *_rects(s.px, pal), "</svg>"]) + "\n")
+    style = [f"<style>{INK_CSS}</style>"] if None in pal.values() else []
+    path.write_text("\n".join([_svg_open(s.w, s.h), *style, *_rects(s.px, pal), "</svg>"]) + "\n")
 
 
 def to_image(s, scale=1, pal=m.PAL):
@@ -84,6 +89,8 @@ def to_animated_svg(frames, path, pal=m.PAL):
         diff = {p: c for p, c in u.px.items() if p not in common}
         groups.append(f'<g class="f{i}">' + "".join(_rects(diff, pal)) + "</g>")
     css.append("@media (prefers-reduced-motion:reduce){g{animation:none!important}.f0{visibility:visible}}")
+    if None in pal.values():
+        css.append(INK_CSS)
     s0 = frames[0][0]
     path.write_text("\n".join([
         _svg_open(s0.w, s0.h), f"<style>{''.join(css)}</style>", *_rects(common, pal), *groups, "</svg>",
@@ -144,9 +151,12 @@ if __name__ == "__main__":
             to_png(s, OUT / f"{name}-{tone}.png", pal=pal)
     frames = m.mascot_frames()
     to_animated_svg(frames, OUT / "mascot-animated.svg")
+    lockups = [(m.lockup(s), ms) for s, ms in frames]
     for tone, ink in INK.items():
-        to_animated_svg([(m.lockup(s), ms) for s, ms in frames], OUT / f"lockup-animated-{tone}.svg",
-                        {**m.PAL, "i": ink})
+        to_animated_svg(lockups, OUT / f"lockup-animated-{tone}.svg", {**m.PAL, "i": ink})
+    to_animated_svg(lockups, OUT / "lockup-animated.svg", ADAPTIVE)
+    to_svg(m.lockup(), OUT / "lockup.svg", ADAPTIVE)
+    to_svg(m.wordmark(), OUT / "wordmark.svg", ADAPTIVE)
     to_gif(frames, OUT / "mascot.gif")
     to_ico(m.icon(), OUT / "favicon.ico")
     social_preview(OUT / "social-preview.png")
