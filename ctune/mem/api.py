@@ -53,7 +53,7 @@ def resolve(name):
 def snapshot(label="", skip_devmem=False):
     """Take a full snapshot (needs root: re-runs itself through pkexec, which shows a password prompt)."""
     script = os.path.join(_platform_dir(), "ram_snapshot.py")
-    cmd = [sys.executable, "-I", script, "--out", SNAPS, "--label", label, "--owner", f"{os.getuid()}:{os.getgid()}"]
+    cmd = [sys.executable, "-I", "-B", script, "--out", SNAPS, "--label", label, "--owner", f"{os.getuid()}:{os.getgid()}"]
     if skip_devmem:
         cmd.append("--skip-devmem")
     if os.geteuid() != 0:

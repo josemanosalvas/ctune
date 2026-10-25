@@ -309,7 +309,7 @@ def main():
     tag = f"{time.strftime('%Y%m%d-%H%M%S')}_{meta['bios_version']}"
     d = os.path.join(a.out, tag)
     os.makedirs(os.path.join(d, "raw"), exist_ok=True)
-    aod = "skipped" if a.skip_devmem else sh([sys.executable, "-I", os.path.join(HERE, "am4_bios_memcfg.py"),
+    aod = "skipped" if a.skip_devmem else sh([sys.executable, "-I", "-B", os.path.join(HERE, "am4_bios_memcfg.py"),
                                               "--dump-dir", os.path.join(d, "raw")])
     sensors = sh(["sensors", "-j"])
 
@@ -348,10 +348,10 @@ def main():
             except OSError:
                 pass
     if not a.skip_devmem:
-        print(sh([sys.executable, "-I", os.path.join(HERE, "dump_fw_mem.py"), os.path.join(d, "raw", "fwmem")]).strip())
+        print(sh([sys.executable, "-I", "-B", os.path.join(HERE, "dump_fw_mem.py"), os.path.join(d, "raw", "fwmem")]).strip())
     hiidb = os.path.join(d, "raw", "fwmem", "hiidb.bin")
     if os.path.exists(hiidb):  # decode every BIOS setup question against this BIOS's own forms
-        print(sh([sys.executable, "-I", os.path.join(HERE, "bios_settings_decode.py"), "--hiidb", hiidb,
+        print(sh([sys.executable, "-I", "-B", os.path.join(HERE, "bios_settings_decode.py"), "--hiidb", hiidb,
                   "--efivars", ev, "--live", "", "--out", os.path.join(d, "decoded")]).strip()[-400:])
     if a.owner:
         uid, gid = (int(x) for x in a.owner.split(":"))

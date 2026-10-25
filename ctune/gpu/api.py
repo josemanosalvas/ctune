@@ -55,7 +55,7 @@ def status():
 
 
 def _helper(args):
-    cmd = [sys.executable, "-I", HELPER, "--state", STATE, "--owner", f"{os.getuid()}:{os.getgid()}"] + args
+    cmd = [sys.executable, "-I", "-B", HELPER, "--state", STATE, "--owner", f"{os.getuid()}:{os.getgid()}"] + args
     if os.geteuid() != 0:
         cmd = ["pkexec"] + cmd
     try:
