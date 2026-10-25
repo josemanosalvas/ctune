@@ -57,3 +57,6 @@ Agents get the same commands as an MCP server (`ctune/mcp_server.py`, standard l
 1. A read-only root helper allowed by a polkit rule, so steps need no password prompt, then an unattended loop: a post-boot or post-apply runner that tests, writes the journal, and wakes the agent through a T3 webhook.
 2. Gigabyte profile files the user loads with "Load Profile" (needs one sample profile saved to USB), and a boot-time apply of the last green GPU settings.
 3. A platform-neutral snapshot format, then `zen4_am5` with the DDR5 register map and AM5 boards (Zen 4 Curve Optimizer runs from -50 to +50 and needs its own probe).
+
+## License
+MIT, see [LICENSE](LICENSE).
