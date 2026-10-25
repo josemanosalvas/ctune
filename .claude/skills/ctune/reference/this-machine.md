@@ -15,7 +15,7 @@ Facts that `status` and the snapshots cannot show. Read live values from the too
   - An update to F19c (AGESA 1.2.0.12) is planned.
 - **CPU.** One CCD with 8 cores and SMT: core N is CPUs N and N+8. PBO limits are stock (142 W / 95 A / 140 A). The cpufreq driver is amd-pstate-epp with EPP balance_performance.
   - BIOS Curve Optimizer on F16b, per core 0-7: -20, -30, -30, -20, -20, -30, -30, -30. Only cores 0, 3 and 4 have negative headroom.
-  - SMU firmware 56.74.0 on F16b. The F19c flash changes it, so `cpu_probe` must match again before any write.
+  - SMU firmware 56.74.0 on F16b. On 2026-10-25 `cpu_probe` read all eight BIOS margins back exactly, and a no-op `cpu_apply` (core 1 = -30) read back -30 with zero corrected errors after. The F19c flash changes the SMU firmware, so `cpu_probe` must match again before any write.
 - **GPU.** MSI RTX 3080 Ti Suprim X: 400 W default power limit (100 to 440 W allowed), max boost 2145 MHz.
   - Stock baseline on 2026-10-25 (`gpu_test` screen, 1 core run): FP32 26,666 GFLOPS, 1,639 MHz average under load, 307 W average, VRAM 768 GB/s with no errors, 78 °C max.
   - The power limit caps the clock about two thirds of the time under load, so an undervolt has real headroom.

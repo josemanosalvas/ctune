@@ -55,4 +55,9 @@ Each was cloned and pinned to a commit on 2026-10-25.
 
 ## Open points
 - **0x48 has one source.** `ctune cpu probe` checks it: the readback must equal the BIOS Curve Optimizer of every core, from the latest snapshot. The root helper refuses to write until a probe in the same boot has matched. Re-run the probe after every BIOS or SMU firmware change.
+- **Checked on this machine on 2026-10-25** (5800X3D, BIOS F16b, SMU 56.74.0, ryzen_smu 0.1.7):
+  - 0x48 returned -20, -30, -30, -20, -20, -30, -30, -30, which is the BIOS per-core setting exactly. The mixed pattern rules out a constant or a coincidence, and it confirms the sign-extended 32-bit return.
+  - 0x35 with arg0 0x0010FFE2 (core 1, -30, a no-op) returned status OK and read back -30.
+  - Both runs left zero corrected machine-check errors and no kernel SMU messages. A 1-minute screen of core 1 afterwards was green.
+  - Not yet shown: that 0x35 sets an absolute value rather than adding to the current one. The no-op cannot tell the two apart, because -30 is the floor. ruv's set-then-read output is the evidence for absolute. The first non-no-op step reads it back, and the helper reports any mismatch.
 - **PBO2 Tuner** is closed source, so it was not checked directly. CoreCycler drives ryzen-smu-cli, which is built on ZSC.
