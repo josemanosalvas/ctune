@@ -49,6 +49,18 @@ def name(h):
     return buf.value.decode()
 
 
+def uuid(h):
+    buf = ctypes.create_string_buffer(96)
+    _call("nvmlDeviceGetUUID", h, buf, ctypes.c_uint(96))
+    return buf.value.decode()
+
+
+def driver_version():
+    buf = ctypes.create_string_buffer(96)
+    _call("nvmlSystemGetDriverVersion", buf, ctypes.c_uint(96))
+    return buf.value.decode()
+
+
 def _uint(fn, h, *pre):
     v = ctypes.c_uint()
     _call(fn, h, *pre, ctypes.byref(v))

@@ -29,5 +29,18 @@ Search, in this order:
 - Verdict `inconclusive` means the test could not run, usually because another app holds VRAM (`blocked_by` names it). Ask the user to close it and run the test again. Do not roll back.
 - gpu-burn never touches the RT cores, ROPs or TMUs. Games, ray tracing especially, stay the strictest test, so after `signoff` the user plays their own games for a few hours.
 
+## Persisting (after the sign-off)
+- `gpu_persist` writes the settings applied now to `/etc/ctune/gpu.json`. A root-owned boot unit re-applies them at boot and after resume with nvidia_oc, a pinned build in `/usr/local/libexec/ctune`.
+- It refuses unless the latest sign-off with exactly these settings and a full gpu phase, on this GPU and driver, was green. Use `dry_run` to see the reasons.
+- The unit sets the power limit and the clock lock first, then the offsets, and reads them back. On any failure the GPU goes back to stock.
+- The unit skips the settings in four cases, and says why in `gpu_status` → `persistence.this_boot`:
+  - **A new driver.** Apply the settings with `gpu_apply`, run `signoff`, then `gpu_persist` again.
+  - **A value over ctune's caps.**
+  - **The crash-loop guard.** In two boots in a row the GPU failed after the apply: a crash within 10 minutes, or an Xid error. Find the cause, then clear it with `gpu_persist` `reset_guard`.
+  - **Resume after a boot that did not apply them.**
+- **Escape at the boot menu:** add `ctune.gpu=off` to the kernel command line.
+- `gpu_unpersist` stops it; the settings applied now stay until reboot. `gpu_reset` and `gpu_apply` still change the running values on top of the persisted ones.
+- During later RAM or CPU campaigns the persisted GPU settings stay active. A crash there is not a GPU result.
+
 ## Power limit
 Keep the default unless the user wants an efficiency target. Lowering it (for example to 320 W) after a good undervolt trades a few percent of performance for noise and heat.

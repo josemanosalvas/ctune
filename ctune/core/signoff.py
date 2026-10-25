@@ -40,6 +40,11 @@ def _settings():
         out["gpu"] = gpu.applied() or "defaults"
     except Exception as e:
         out["gpu"] = f"unavailable: {e}"
+    try:
+        from ctune.gpu import persist
+        out["gpu_identity"] = persist.identity()   # persist() trusts a sign-off only on this GPU and driver
+    except Exception as e:
+        out["gpu_identity"] = f"unavailable: {e}"
     return out
 
 

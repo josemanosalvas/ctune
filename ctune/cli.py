@@ -92,6 +92,15 @@ def build():
     s.add_argument("--detach", action="store_true")
     s.add_argument("--note", default="")
     g.add_parser("burn-setup", help="build the gpu-burn image (podman, pinned commit, about 4 GB download once)")
+    s = g.add_parser("persist", help="re-apply the settings applied now at every boot, if a green sign-off covers "
+                                     "them (root via pkexec)")
+    s.add_argument("--dry-run", action="store_true", help="show the config or the reasons it is refused")
+    s.add_argument("--reset-guard", action="store_true", help="clear a tripped crash-loop guard instead")
+    s = g.add_parser("unpersist", help="stop re-applying at boot (root via pkexec); settings applied now stay until reboot")
+    s.add_argument("--uninstall", action="store_true", help="also remove the units and /usr/local/libexec/ctune")
+    g.add_parser("persist-setup", help="build nvidia_oc for the boot unit (podman, pinned commit, about 1 GB download once)")
+    g.add_parser("persist-selftest", help="install the boot side and apply the current values through it once, a "
+                                          "no-op (root via pkexec)")
     s = g.add_parser("xid", help="NVIDIA Xid errors from the kernel log")
     s.add_argument("--since", default="boot")
 
@@ -200,6 +209,10 @@ def main(argv=None):
             _out(burn.setup())
         elif a.gcmd == "xid":
             _out(gpu.xid_errors(a.since))
+        elif a.gcmd in ("persist", "unpersist", "persist-setup", "persist-selftest"):
+            from ctune.gpu import persist
+            _out({"persist": lambda: persist.reset_guard() if a.reset_guard else persist.persist(a.dry_run), "unpersist": lambda: persist.unpersist(a.uninstall),
+                  "persist-setup": persist.setup, "persist-selftest": persist.selftest}[a.gcmd]())
     elif a.cmd == "cpu":
         if a.ccmd == "status":
             _out(cpu.status())

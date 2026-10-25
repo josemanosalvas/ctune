@@ -13,7 +13,15 @@ Research from 2026-10-25. Each topic had one researcher and three skeptics, and 
 | **C. nvidia_oc** (Dreaming-Codes/nvidia_oc, MIT), a stateless NVML CLI for power limit, offsets and min/max clock, in the boot unit of B. | Reuses an existing tool for the boot unit, and is documented for exactly that use. | Small project; quality and maintenance unverified. No caps, no re-apply after resume. Still needs B's root-owned placement and guards. |
 | **D. Hybrid:** LACT holds only the signed-off baseline; ctune experiments with LACT detached (`detach_gpu`, v0.10.0). | Persistence comes from LACT; experiments keep the prompt. | Two writers. Detach lives only in memory and is lost when lactd restarts. Relies on APIs about three months old. The passwordless socket still exists. Both skeptics rated it the most fragile option. |
 
-**Recommendation: B, with C or `nvidia-smi` doing the boot-time apply, and only signed-off settings persist.** Choose A only if you want LACT's GUI and VF curve, and accept passwordless GPU and kernel-argument changes from your user account. If you choose A, set `daemon.disable_nvapi: true`, pin the version (`flatpak mask`), and keep LACT out of RAM and CPU campaigns. Nothing is urgent: the GPU campaign can run on runtime-only settings, which is how ctune works today.
+**Decision (the user, 2026-10-25): B with C. Only signed-off settings persist, and nvidia_oc does the boot-time apply.** `nvidia-smi` sets the power limit and the clock lock but not the clock offsets that the undervolt needs, so nvidia_oc does all four with the same NVML calls as ctune's helper. Built and checked on 2026-10-25: `ctune/gpu/persist.py`, `install.py` and `boot_apply.py`; gpu-nvidia.md describes its use. A no-op self-test applied the current values through the installed root-owned copy and read them back. The resume hook is untested, because this machine has not suspended since then. An independent review found no privilege-escalation path. Its fixes are in:
+  - `plan()` requires a full-length gpu phase.
+  - The power limit and lock go before the offsets, with a rollback to stock on any failure.
+  - Resume follows the boot result.
+  - The guard counts Xid errors after the apply.
+  - A start timeout and the `ctune.gpu=off` switch.
+  - A failed persist removes its config.
+
+**Recommendation, before the decision: B, with C or `nvidia-smi` doing the boot-time apply, and only signed-off settings persist.** Choose A only if you want LACT's GUI and VF curve, and accept passwordless GPU and kernel-argument changes from your user account. If you choose A, set `daemon.disable_nvapi: true`, pin the version (`flatpak mask`), and keep LACT out of RAM and CPU campaigns. Nothing is urgent: the GPU campaign can run on runtime-only settings, which is how ctune works today.
 
 ## 2. Crash forensics
 
@@ -32,7 +40,9 @@ Already done in ctune, no install needed:
 | **efi_pstore** instead of ramoops (`efi_pstore.pstore_disable=0`). | Survives power loss, and does not depend on the board keeping RAM through a reset. | Writes UEFI NVRAM at panic time; firmware bugs can corrupt NVRAM. Only one pstore backend can run at a time. |
 | **kdump**. | The standard full crash dump. | Needs kexec-tools layered, and the NVIDIA driver complicates it. Rejected. |
 
-**Recommendation:** enable `boot-check` and quiet ollama's logging first. Both are cheap and fix the evidence actually lost. Then turn on ramoops, and keep it only if a deliberate test panic survives on this board; it helps the RAM campaign most. Skip rasdaemon and kdump. Consider the hardware watchdog for unattended sign-offs once the blacklist is checked.
+**Decision (the user, 2026-10-25):** enable `boot-check`, then ramoops, kept only if a deliberate test panic survives on this board. Done the same day: `boot-check` is enabled. ramoops is enabled through `ujust toggle-save-panics enable` and active from the next boot. A drop-in (`/etc/systemd/system/systemd-pstore.service.d/ctune-ramoops.conf`) orders systemd-pstore after `modprobe@ramoops`, because the stock unit waits only for efi_pstore. The panic test is pending. Quieting ollama's logging was not chosen.
+
+**Recommendation, before the decision:** enable `boot-check` and quiet ollama's logging first. Both are cheap and fix the evidence actually lost. Then turn on ramoops, and keep it only if a deliberate test panic survives on this board; it helps the RAM campaign most. Skip rasdaemon and kdump. Consider the hardware watchdog for unattended sign-offs once the blacklist is checked.
 
 ## 3. BIOS setup decoder (mem domain)
 

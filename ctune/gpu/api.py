@@ -18,16 +18,24 @@ VKPEAK = os.path.join(TOOLS, "vkpeak", "vkpeak-20260527-linux", "vkpeak")
 
 
 def _boot_id():
-    return open("/proc/sys/kernel/random/boot_id").read().strip()
+    with open("/proc/sys/kernel/random/boot_id") as f:
+        return f.read().strip()
 
 
 def applied():
-    """What ctune applied since this boot (NVML has no getter for locked clocks)."""
+    """What ctune applied this boot (NVML has no getter for locked clocks): the boot unit's persisted settings,
+    overlaid by runtime changes from gpu_apply or gpu_reset."""
+    from ctune.gpu import persist
+    b = persist.boot_result()
+    out = dict(b["applied"], source="boot unit") if b and b.get("ok") and b.get("applied") else {}
     try:
         s = json.load(open(STATE))
-        return s if s.get("boot_id") == _boot_id() else {}
+        # newest wins: a resume re-applies the persisted values over earlier runtime changes
+        if s.get("boot_id") == _boot_id() and (not out or os.path.getmtime(STATE) > b.get("epoch", 0)):
+            out.update(s, source="gpu_apply" if not out else "boot unit, then gpu_apply")
     except (OSError, ValueError):
-        return {}
+        pass
+    return out
 
 
 def xid_errors(since="boot"):
@@ -51,8 +59,17 @@ def status():
         "vram_mb": dict(zip(("total", "free", "used"), nvml.memory_mb(h))),
         "clock_limiters": nvml.event_reasons(h),
         "applied_by_ctune": applied(),
+        "persistence": _persist_status(),
         "xid_errors_this_boot": len(xid_errors()),
     }
+
+
+def _persist_status():
+    from ctune.gpu import persist
+    try:
+        return persist.status()
+    except Exception as e:
+        return {"error": f"{type(e).__name__}: {e}"}
 
 
 def _helper(args):

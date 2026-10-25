@@ -13,6 +13,7 @@ from ctune.core import errors as core_errors, journal, runner, sensors, signoff 
 from ctune.core.paths import DATA  # noqa: E402
 from ctune.cpu import api as cpu  # noqa: E402
 from ctune.gpu import api as gpu  # noqa: E402
+from ctune.gpu import persist as gpu_persist  # noqa: E402
 from ctune.mem import api as mem  # noqa: E402
 from ctune.mem import test as memtest  # noqa: E402
 
@@ -109,6 +110,17 @@ TOOLS = {
                                 burn_seconds=a.get("burn_seconds", 600), fp64_seconds=a.get("fp64_seconds", 300),
                                 tc_seconds=a.get("tc_seconds", 0), vram_seconds=a.get("vram_seconds", 300),
                                 core_runs=a.get("core_runs", 3), note=a.get("note", ""))),
+    "gpu_persist": ("Re-apply the GPU settings applied now at every boot and after resume (root, password prompt). "
+                    "Refused unless the latest sign-off with exactly these settings, on this GPU and driver, was green. "
+                    "A root-owned boot unit applies them with nvidia_oc; it skips them after a driver update or two "
+                    "boots in a row in which the GPU failed (a crash within 10 minutes, or an Xid error). dry_run shows the "
+                    "config or the reasons; reset_guard only clears a tripped guard.",
+                    _obj({"dry_run": {"type": "boolean"}, "reset_guard": {"type": "boolean"}}),
+                    lambda a: gpu_persist.reset_guard() if a.get("reset_guard")
+                    else gpu_persist.persist(a.get("dry_run", False))),
+    "gpu_unpersist": ("Stop re-applying GPU settings at boot (root, password prompt). Settings applied now stay until "
+                      "reboot. uninstall also removes the units and the root-owned copies.",
+                      _obj({"uninstall": {"type": "boolean"}}), lambda a: gpu_persist.unpersist(a.get("uninstall", False))),
     "gpu_xid": ("NVIDIA Xid errors from the kernel log ('boot' or a journalctl --since value).",
                 _obj({"since": S}), lambda a: gpu.xid_errors(a.get("since", "boot"))),
     # cpu

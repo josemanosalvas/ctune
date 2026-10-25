@@ -26,6 +26,20 @@ Research from 2026-10-25: six researchers, with skeptics on the decision topics.
   - Checked live: SIGTERM stops it cleanly with the summary line. SIGSTOP/SIGCONT suspend and resume it. One SSE Huge test takes about 30 s on this CPU.
 - **Not measured yet.** How long one full SSE Huge cycle takes here. CoreCycler's 13-19 min is from a 5900X, and the 96 MiB L3 makes the smaller Huge lengths partly cache-resident.
 
+## nvidia_oc, the boot-time GPU applier
+- **Source.** github.com/Dreaming-Codes/nvidia_oc, tag 0.1.24 (commit 54f59c3, 2026-01-23), MIT, 226 stars. One file, `src/main.rs`, on nvml-wrapper 0.11.
+- **What it calls.** `set` makes the same NVML calls as ctune's `apply.py`:
+  - `set_gpc_clock_vf_offset` and `set_mem_clock_vf_offset` (the offsets);
+  - `set_power_management_limit` (in milliwatts);
+  - `set_gpu_locked_clocks` (min and max).
+  - It has no range checks of its own; NVML refuses values out of range.
+  - It panics on the first failing setter, so a failure can leave the earlier settings applied. `boot_apply.py` reads back after every run.
+- **Why not nvidia-smi.** `nvidia-smi` 615.78 has `-pl` and `-lgc`, but no clock offsets and no query field for them. `nvidia_oc get` reads them back.
+- **Build.** No signed or attested release binary; the release workflow builds `master` with `cargo build --release` on ubuntu-latest. ctune builds the pinned commit with `cargo build --release --locked` in `docker.io/library/rust:1-slim-bookworm` (`ctune/gpu/nvidia_oc.Containerfile`). The digest and rustc version go in `tools/nvidia_oc/VERSION`.
+  - Two builds gave the same sha256, bda6f0eb…, with rustc 1.99.1. It links only glibc and libgcc_s, and loads `libnvidia-ml.so.1` at run time.
+- **Checked live.** `nvidia_oc get --index 0` as the user read the offsets at 0 and the power limit at 400 W. As root, through the installed copy, a no-op `set` read back unchanged.
+- **Root.** It escalates itself through sudo, doas or pkexec when it does not run as root. The boot unit runs it as root, so that path is never taken.
+
 ## systemd-run --user, the detached runner
 Settings checked against the systemd 259.9 man pages and probe units on this machine:
 - **Unit type.** A transient service lands in `app.slice` under `user@1000.service`. The old Popen runner stayed in the T3 agent's scope (`/proc/self/cgroup`), so stopping that scope would have killed it.
