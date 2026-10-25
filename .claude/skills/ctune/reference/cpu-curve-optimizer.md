@@ -1,30 +1,31 @@
 # Curve Optimizer (Zen 3, runtime through the SMU)
 
-Curve Optimizer (CO) shifts each core's voltage/frequency curve by a **margin**: negative means less voltage at every clock, about 3 to 5 mV per count. Zen 3 allows -30 to +30. ctune sets the margin at runtime through the SMU, one core at a time. A reboot or a crash restores the BIOS margins, so a failed step costs a reboot and nothing else. Sources, command IDs and encoding are in `docs/research/cpu-co-smu.md`.
+Curve Optimizer (CO) shifts each core's voltage/frequency curve by a **margin**. A negative margin means less voltage at every clock, about 3 to 5 mV per count. When a probe or a readback does not match, or before you change the SMU code, read `docs/research/cpu-co-smu.md` for the command IDs, the encoding and the sources.
 
-## Before the first write in a boot
-- `cpu_probe` reads every core's margin through the SMU and compares it with the BIOS values from the latest mem snapshot. Writes are refused until a probe in the same boot matches.
-- A mismatch means the snapshot is stale (take `mem_snapshot`) or something else changed a margin. After a BIOS flash, the user re-enters CO from the re-entry checklist, then you take `mem_snapshot` and `cpu_probe`.
+## Probe mismatch
+`cpu_probe` compares the SMU's margins with the BIOS values in the latest mem snapshot. A mismatch has two causes:
+- The snapshot is older than the BIOS settings, for example right after a flash. The user re-enters CO from the re-entry checklist, you take `mem_snapshot`, then run `cpu_probe` again.
+- Something else changed a margin this boot. Ask the user what else writes to the SMU, or reboot.
 
 ## Search
-1. **Validate the cores at -30 first.** They sit at the floor, so they cannot go lower. An all-core stress test passes on margins that fail single-core, so screen each one on its own. A red core moves toward 0 (-25, then -27 or -28 to refine).
-2. **Push the cores with headroom** in steps of -5 (`cpu_apply` allows at most 5 per step), one core per step, with a screen after each.
-3. At the first red value, refine between it and the last green value in steps of 1 or 2. Keep the final margin at least 2 counts above (less negative than) the first red value.
-4. **Sign-off.** Run every core in random order with `seconds_per_core` 600 or more. Then the user runs their own games and leaves the machine idle for a few hours, overnight if possible.
-5. **Persist.** Runtime margins vanish at reboot, so the user enters the final values in the BIOS (`mem_bios_search` "Curve Optimizer" gives the menu path; each core has a sign and a magnitude). Then take `mem_snapshot` and run `cpu_probe` to confirm.
+1. **Screen the cores at -30 first**, each on its own at its current margin. All-core stress tests pass on margins that fail single-core. A red core goes to -25, then -27 or -28 to refine. Done when each of them is green at its final margin.
+2. **Lower the cores with headroom** by 5 counts per step, the most `cpu_apply` allows, and screen after each. Done when each has a first red value.
+3. **Refine** between the last green and the first red value in steps of 1 or 2. Done when every core has a green final margin at least 2 counts less negative than its first red value.
+4. **Sign-off.** Run all cores in random order with `seconds_per_core` 600 or more. Then the user plays their own games and leaves the machine idle for a few hours, overnight if possible. Done when every core is green and the user reports no crash.
+5. **Persist.** Runtime margins last until reboot. The user enters the final values in the BIOS, a sign and a magnitude per core, under the menu path that `mem_bios_search` "Curve Optimizer" returns. Then take `mem_snapshot` and run `cpu_probe`. Done when the probe matches the new values.
 
 ## Testing
-CO errors show up in single-thread boost and in load-to-idle transitions. All-core loads run lower clocks with more voltage headroom, so they miss most of them. `cpu_test` pins one verified stress-ng thread to the core under test, cycles through integer, FP, vector, FMA and hash loads, then a bursty light load, with idle gaps in between. A step's screen is `cpu_test` with `cores` set to the changed core: about 6 minutes. All eight cores take about 50 minutes; tell the user before a long run.
+CO errors show up in single-thread boost and in load-to-idle transitions. All-core loads run lower clocks with more voltage headroom, so they miss most of them, which is why `cpu_test` runs one core at a time. One core takes about 6 minutes and all eight about 50, so tell the user before a long run.
 
 A step is **red** on any of these:
 - A stress-ng verification error or crash.
-- A corrected machine-check error, usually in a core bank (load_store, insn_fetch, l2_cache, decode_unit, execution_unit, floating_point) or L3. `mce_delta_by_cpu` names the CPU: CPU N and N+8 are core N. An error on an idle core during another core's test points at the idle core.
-- A freeze or reboot. The next cpu call records the cut-short test as red, with the core and phase that were running and this boot's "Hardware Error" lines. Read `journalctl -k -b -1` next.
+- A corrected machine-check error, usually in the core or core/l3 subsystem. `mce_delta_by_cpu` names the logical CPU, and `cpu_status` maps it to a core. An error on an idle core during another core's test makes the idle core the suspect.
+- A freeze or reboot. The next cpu call writes the red result, with the core and phase that were running and this boot's "Hardware Error" lines. Read `journalctl -k -b -1` next.
 
 ## Reading results
-- Compare `voltage_v_avg` and `eff_ghz_avg` per phase against the baseline at the same phase. A more negative margin shows as lower voltage at the same clock, and lower `temp_c_max`.
-- The pm_table averages its clocks over its sample window, so it shows sustained clocks, not the instantaneous single-core peak.
+- Compare `voltage_v_avg` and `eff_ghz_avg` per phase with the same phase of the baseline. A more negative margin gives lower voltage at the same clock and a lower `temp_c_max`.
+- The pm_table averages clocks over its sample window. It shows sustained clocks, not the momentary single-core peak.
 - `bogo_ops_s` moves only when clocks move. Treat a few percent as noise.
 
 ## Payoff on a 5800X3D
-The X3D has no boost override: the clock tops out near 4.55 GHz single-core and 4.45 GHz all-core, whatever the margin. CO lowers voltage and temperature, so heavy loads hold clocks longer before the temperature limit. Games gain about 0 to 2 %. Tell the user this when they weigh effort against gain.
+The X3D has no boost override, so the clock tops out near 4.55 GHz single-core and 4.45 GHz all-core at any margin. CO lowers voltage and temperature, so heavy loads hold their clocks longer before the temperature limit. Games gain about 0 to 2 %. Tell the user this when they weigh effort against gain.

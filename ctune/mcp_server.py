@@ -94,19 +94,19 @@ TOOLS = {
                    "core machine-check counts per CPU, this boot's probe result, and any test cut short by a crash.",
                    _obj(), lambda a: cpu.status()),
     "cpu_probe": ("Read every core's margin through the SMU (read-only, root, password prompt) and compare it with the "
-                  "BIOS values from the latest mem snapshot. Writes are refused until a probe in the same boot "
-                  "matches. Run it once per boot before cpu_apply, and again after any BIOS or SMU firmware change.",
+                  "BIOS values from the latest mem snapshot. cpu_apply refuses to write until a probe in the same "
+                  "boot matches, so run it once per boot before the first cpu_apply.",
                   _obj(), lambda a: cpu.probe()),
     "cpu_apply": ("Set one core's Curve Optimizer margin at runtime (root, password prompt), then read it back. margin "
-                  "is -30..30 and at most 5 away from the core's current value. dry_run checks the guardrails and "
+                  "is -30 to 30 and at most 5 away from the core's current value. dry_run checks the guardrails and "
                   "shows the SMU mailbox word without sending anything. The margin lasts until reboot.",
                   _obj({"core": {"type": "integer"}, "margin": {"type": "integer"}, "dry_run": {"type": "boolean"}},
                        ["core", "margin"]),
                   lambda a: cpu.apply(a["core"], a["margin"], a.get("dry_run", False))),
     "cpu_reset": ("Restore the boot (BIOS) margin of every core ctune changed this boot (root, password prompt).",
                   _obj(), lambda a: cpu.reset()),
-    "cpu_test": ("Per-core stability test, recorded in the journal: one verified stress-ng thread pinned to each core in "
-                 "turn (FFT, int64, matrix, wide vector, FMA, hash, then a bursty 25 % load), with idle gaps between "
+    "cpu_test": ("Per-core stability test, recorded in the journal. One self-checking stress-ng thread is pinned to each "
+                 "core in turn (FFT, int64, matrix, wide vector, FMA, hash, then a bursty 25 % load), with idle gaps between "
                  "phases and 1 Hz per-core telemetry. Takes about seconds_per_core (default 360) per core. Returns "
                  "verdict green/red, red cores, per-phase clocks and voltages, and new corrected machine-check errors.",
                  _obj({"cores": {"type": "array", "items": {"type": "integer"}}, "seconds_per_core": {"type": "integer"},

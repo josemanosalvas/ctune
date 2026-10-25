@@ -4,11 +4,11 @@
 
 ## Sources
 Each was cloned and pinned to a commit on 2026-10-25.
-- **ZSC**: irusanov/ZenStates-Core @869b7e8 (C#, the library behind ZenTimings and ryzen-smu-cli/CoreCycler).
-- **UXTU**: JamesCJ60/Universal-x86-Tuning-Utility @eeb4304, `Universal x86 Tuning Utility/Scripts/AMD Backend/RyzenSmu.cs`.
-- **ruv**: svenlange2/Ryzen-5800x3d-linux-undervolting @c08815d, `ruv.py`. This is a Linux script for the 5800X3D on ryzen_smu. Its README shows set and readback output on that CPU.
-- **RSMU**: amkillam/ryzen_smu @d298366 (`smu.c`, `smu.h`, `drv.c`), driver 0.1.7, the same version that is loaded here.
-- **CC**: sp00n/corecycler @a95b523, `configs/default.config.ini`, for the test method.
+- **ZSC.** irusanov/ZenStates-Core @869b7e8, the C# library behind ZenTimings and ryzen-smu-cli. CoreCycler drives ryzen-smu-cli.
+- **UXTU.** JamesCJ60/Universal-x86-Tuning-Utility @eeb4304, `Universal x86 Tuning Utility/Scripts/AMD Backend/RyzenSmu.cs`.
+- **ruv.** svenlange2/Ryzen-5800x3d-linux-undervolting @c08815d, `ruv.py`, a Linux script for the 5800X3D on ryzen_smu. Its README shows set and readback output on that CPU.
+- **RSMU.** amkillam/ryzen_smu @d298366 (`smu.c`, `smu.h`, `drv.c`), driver 0.1.7, the same version that is loaded here.
+- **CC.** sp00n/corecycler @a95b523, `configs/default.config.ini`, for the test method.
 
 ## Command IDs (MP1 mailbox)
 | ID | Function | Sources |
@@ -27,7 +27,7 @@ Each was cloned and pinned to a commit on 2026-10-25.
 [27:24] CCX index      (always 0 on Zen 3: one CCX per CCD)
 [23:20] core index within the CCD (0-7)
 [19:16] zero
-[15:0]  margin, 16-bit two's complement (-30 -> 0xFFE2, +5 -> 0x0005)
+[15:0]  margin, 16-bit two's complement (-30 is 0xFFE2, +5 is 0x0005)
 ```
 - ZSC `Hardware/Smu/Commands/SetPsmMarginSingleCore.cs` L3-10 documents the layout, and L25 builds `(coreMask & 0xfff00000) | margin`.
 - ZSC `Utils.cs` L180-184 `MakePsmMarginArg`: `(margin < 0 ? 0x100000 + margin : margin) & 0xffff`. That is 16-bit two's complement with bits 19:16 clear.
@@ -35,14 +35,14 @@ Each was cloned and pinned to a commit on 2026-10-25.
 - ruv L114: `((core & 8) << 5 | core & 7) << 20 | value & 0xFFFF`. That is the same word, with core 8+ mapped to CCD 1.
 - UXTU `Views/Pages/CustomPresets.xaml.cs` L1188-1189 (non-AM5 path): `(core << 20) | (value & 0xFFFF)`.
 - Other arguments are 0. The all-core form takes only the margin, with no core bits.
-- **Getter return.** ruv L105-110 reads response argument 0 and subtracts 2^32 when it exceeds 2^31. So the value comes back as a sign-extended 32-bit integer (-30 → 0xFFFFFFE2). Its README shows `Core 0 set to: -30 readback: -30`, and says requests beyond -30 read back as -30, so the SMU clamps.
-- **Range.** ±30 before Zen 4 (ZSC SetPsmMarginSingleCore.cs L4; CC config L539, L547).
-- **Semantics.** The setter writes an absolute margin that replaces the BIOS value. It does not add to it: ruv sets -30 and reads -30 back on every core. A reboot restores the BIOS values (ruv README; CC config L523-526: "NOT permanent").
+- **Getter return.** ruv L105-110 reads response argument 0 and subtracts 2^32 when it exceeds 2^31. So the value comes back as a sign-extended 32-bit integer: -30 is 0xFFFFFFE2. Its README shows `Core 0 set to: -30 readback: -30`, and says requests beyond -30 read back as -30, so the SMU clamps.
+- **Range.** The margin runs from -30 to +30 before Zen 4 (ZSC SetPsmMarginSingleCore.cs L4; CC config L539, L547).
+- **Semantics.** Every tool treats the value as absolute, and the command is named Set, not Add. No source shows a set on a core whose BIOS margin was not 0, so an additive setter is not ruled out. ruv's machine most likely had no BIOS margin, and there an absolute and an additive setter both read back -30. A reboot restores the BIOS values (ruv README; CC config L523-526, "NOT permanent").
 
 ## Mailbox and driver behaviour
 - **Addresses.** ryzen_smu uses MP1 cmd 0x3B10530, rsp 0x3B1057C and args 0x3B109C4 for Vermeer (`smu.c` L528-531). ZSC Zen3Settings.cs L11-13 and UXTU L393-395 agree.
 - **Sysfs protocol.** Write exactly 24 bytes (six little-endian u32) to `smu_args`. Any other size is ignored (`drv.c` L223-228). Then write a 4-byte ID to `mp1_smu_cmd` (`drv.c` L169-186). Reading `mp1_smu_cmd` returns the status (1 = OK). Reading `smu_args` returns the six response words.
-- **The status cannot prove a write landed.** `smu_send_command` (`smu.c` L201-213) reports a failure only when the retries run out. A quick error response such as 0xFE (unknown command) or 0xFA (invalid argument) falls through, and the driver returns OK. ctune therefore reads the margin back with 0x48 after every write.
+- **The status cannot prove a write took effect.** `smu_send_command` (`smu.c` L201-213) reports a failure only when the retries run out. A quick error response such as 0xFE (unknown command) or 0xFA (invalid argument) falls through, and the driver returns OK. ctune therefore reads the margin back with 0x48 after every write.
 - **The argument buffer is shared.** `smu_args` is one buffer for every process using the driver, and the write and the command are two separate syscalls. ctune's helper serialises its own calls with a lock file. Nothing else on this machine sends SMU commands.
 - **Driver identification.** `codename` 12 is CODENAME_VERMEER (`smu.h` L66-79). `mp1_if_version` 2 is IF_VERSION_11 (`smu.h` L100-103). This CPU reports family 25 (0x19) and model 33 (0x21).
 
@@ -51,7 +51,7 @@ Each was cloned and pinned to a commit on 2026-10-25.
 - 6 minutes per core (L79). Random order on CPUs with 8 or fewer cores (L94). 15 s between cores (L197).
 - Periodic suspend/resume to create load-to-idle transitions (L82-89).
 - On an error, skip the rest of that core and continue (L117).
-- ctune keeps the shape and swaps Prime95 for stress-ng stressors that check their own results (`stress-ng --verifiable`). It mixes integer, double-precision FFT, matrix, wide-vector, FMA and hash work, adds a bursty phase at 25 % load with random busy slices of 0 to 0.5 s, and puts idle gaps between phases. With fixed 10 to 50 ms slices the pm_table never showed more than 3.7 GHz on the tested core. Random slices reached 4.2 GHz, so they cover both short wake-ups and full-boost bursts.
+- ctune keeps this structure and swaps Prime95 for stress-ng stressors that check their own results (`stress-ng --verifiable`). It mixes integer, double-precision FFT, matrix, wide-vector, FMA and hash work, adds a bursty phase at 25 % load with random busy slices of 0 to 0.5 s, and puts idle gaps between phases. With fixed 10 to 50 ms slices the pm_table never showed more than 3.7 GHz on the tested core. Random slices reached 4.2 GHz, so they cover both short wake-ups and full-boost bursts.
 
 ## Open points
 - **0x48 has one source.** `ctune cpu probe` checks it: the readback must equal the BIOS Curve Optimizer of every core, from the latest snapshot. The root helper refuses to write until a probe in the same boot has matched. Re-run the probe after every BIOS or SMU firmware change.
@@ -59,5 +59,5 @@ Each was cloned and pinned to a commit on 2026-10-25.
   - 0x48 returned -20, -30, -30, -20, -20, -30, -30, -30, which is the BIOS per-core setting exactly. The mixed pattern rules out a constant or a coincidence, and it confirms the sign-extended 32-bit return.
   - 0x35 with arg0 0x0010FFE2 (core 1, -30, a no-op) returned status OK and read back -30.
   - Both runs left zero corrected machine-check errors and no kernel SMU messages. A 1-minute screen of core 1 afterwards was green.
-  - Not yet shown: that 0x35 sets an absolute value rather than adding to the current one. The no-op cannot tell the two apart, because -30 is the floor. ruv's set-then-read output is the evidence for absolute. The first non-no-op step reads it back, and the helper reports any mismatch.
+  - Still open: whether 0x35 sets an absolute value or adds to the current one. A no-op at -30 cannot tell the two apart, because -30 is the floor. Setting a -30 core to -25 can: an absolute setter reads back -25, and an additive one reads back -30, because -55 clamps. The check is queued as the first cpu change in `.claude/skills/ctune/reference/this-machine.md`.
 - **PBO2 Tuner** is closed source, so it was not checked directly. CoreCycler drives ryzen-smu-cli, which is built on ZSC.
