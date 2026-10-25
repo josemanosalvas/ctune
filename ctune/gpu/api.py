@@ -9,7 +9,7 @@ import time
 
 from ctune.core import journal, stress
 from ctune.core.paths import DATA, TOOLS
-from ctune.gpu import nvml
+from ctune.gpu import burn, nvml
 
 STATE = os.path.join(DATA, "gpu_state.json")
 HELPER = os.path.join(os.path.dirname(os.path.abspath(__file__)), "apply.py")
@@ -95,22 +95,23 @@ def reset():
 
 # ---------------------------------------------------------------- tests
 class _Sampler(threading.Thread):
-    """1 Hz NVML telemetry during a test."""
+    """1 Hz NVML telemetry during a test, tagged with the running part (fp32, fp64, tc, vram, vkpeak)."""
 
     def __init__(self):
         super().__init__(daemon=True)
-        self.h, self.rows, self.stop = nvml.handle(0), [], threading.Event()
+        self.h, self.rows, self.stop, self.part = nvml.handle(0), [], threading.Event(), None
 
     def run(self):
         while not self.stop.wait(1.0):
             try:
                 self.rows.append((nvml.clock(self.h), nvml.power_w(self.h), nvml.temperature(self.h),
-                                  tuple(nvml.event_reasons(self.h))))
+                                  tuple(nvml.event_reasons(self.h)), self.part))
             except nvml.NvmlError:
                 pass
 
-    def summary(self):
-        busy = [r for r in self.rows if "idle" not in r[3]] or self.rows
+    def summary(self, part=None, max_clock=None):
+        rows = [r for r in self.rows if part is None or r[4] == part]
+        busy = [r for r in rows if "idle" not in r[3]] or rows
         if not busy:
             return {}
         clocks, powers, temps = [r[0] for r in busy], [r[1] for r in busy], [r[2] for r in busy]
@@ -118,10 +119,13 @@ class _Sampler(threading.Thread):
         for r in busy:
             for x in r[3]:
                 limiters[x] = limiters.get(x, 0) + 1
-        return {"samples": len(busy), "core_mhz_avg": round(sum(clocks) / len(clocks)), "core_mhz_min": min(clocks),
-                "core_mhz_max": max(clocks), "power_w_avg": round(sum(powers) / len(powers), 1),
-                "power_w_max": round(max(powers), 1), "temp_c_max": max(temps),
-                "limiter_share": {k: round(v / len(busy), 2) for k, v in limiters.items()}}
+        out = {"samples": len(busy), "core_mhz_avg": round(sum(clocks) / len(clocks)), "core_mhz_min": min(clocks),
+               "core_mhz_max": max(clocks), "power_w_avg": round(sum(powers) / len(powers), 1),
+               "power_w_max": round(max(powers), 1), "temp_c_max": max(temps),
+               "limiter_share": {k: round(v / len(busy), 2) for k, v in limiters.items()}}
+        if max_clock:   # does this load reach the locked top of the V/F curve, or does the power cap hold it below?
+            out["at_lock_share"] = round(sum(c >= max_clock - 15 for c in clocks) / len(clocks), 2)
+        return out
 
 
 def parse_vram(rc, out, stopped=True):
@@ -189,7 +193,8 @@ def _vram(seconds, budget_bytes=None):
             **parse_vram(r.returncode, r.stdout)}
 
 
-def _core(runs):
+def _vkpeak(runs):
+    """vkpeak FP32 throughput: a score only, it never checks its results."""
     scores = []
     for _ in range(runs):
         r = subprocess.run([VKPEAK, "0"], capture_output=True, text=True, timeout=600)
@@ -201,11 +206,55 @@ def _core(runs):
             "ok": len(good) == runs}
 
 
-def test(kind="screen", vram_seconds=300, core_runs=3, budget_bytes=None, note="", record=True):
-    """kind: 'core' (vkpeak, score + load), 'vram' (memtest_vulkan), or 'screen' (both).
-    Green = every part ok, no new Xid errors, no crash."""
+TEMP_LIMIT_C = 83   # guardrail (SKILL.md): a gpu-burn run stops at this core temperature
+
+
+def _burn(mode, seconds, h):
+    """One gpu-burn run (fp32, fp64 or tc) with the temperature guard."""
+    _, free, _ = nvml.memory_mb(h)
+    mb = min(free - 1024, 8192)
+    if mb < burn.MIN_MB[mode]:   # the test cannot run: inconclusive, not red
+        return {"ok": False, "unavailable": True, "mode": mode,
+                "errors": [f"only {free} MiB of VRAM free; gpu-burn {mode} needs {burn.MIN_MB[mode] + 1024}"]}
+    ld = stress.Load(f"gpu-burn {mode}", burn.cmd(mode, seconds, mb), burn.parse, self_timed=True)
+
+    def guard():
+        try:
+            t = nvml.temperature(h)
+        except nvml.NvmlError:
+            return None
+        return f"GPU reached {t} °C, the {TEMP_LIMIT_C} °C guardrail" if t >= TEMP_LIMIT_C else None
+    try:
+        r = stress.run_loads([ld], seconds + 15, on_tick=guard)   # gpu-burn adds its 10 s -stts and start-up
+    finally:
+        burn.cleanup()   # only ever removes this run's container: stress.run admits one test at a time
+    out = {**r["loads"][0], "mode": mode, "seconds": seconds, "mb": mb}
+    if r["early_exit"] and r["early_exit"] != ld.name:
+        out["ok"] = False
+        out["errors"].append(r["early_exit"])
+    return out
+
+
+def test(kind="screen", burn_seconds=600, fp64_seconds=300, tc_seconds=0, vram_seconds=300, core_runs=3,
+         budget_bytes=None, note="", record=True):
+    """kind: 'core' (gpu-burn: FP32 SGEMM, then FP64 and tensor-core runs if their seconds > 0, every result checked),
+    'vram' (memtest_vulkan), 'screen' (core + vram), or 'vkpeak' (throughput score only, nothing checked).
+    Green = every part ok, no new Xid errors, the temperature guardrail not hit, no crash."""
+    if kind not in ("core", "vram", "screen", "vkpeak"):
+        raise ValueError("kind is core, vram, screen or vkpeak")
+    durations = {"fp32": burn_seconds, "fp64": fp64_seconds, "tc": tc_seconds}
+    if any(v < 0 for v in durations.values()) or vram_seconds < 0:
+        raise ValueError("durations cannot be negative")
+    if kind in ("core", "screen"):
+        if not any(durations.values()):
+            raise ValueError("core and screen need at least one gpu-burn duration above 0")
+        short = [f"{m} {v} s < {burn.MIN_SECONDS[m]} s" for m, v in durations.items() if 0 < v < burn.MIN_SECONDS[m]]
+        if short:
+            raise ValueError(f"gpu-burn runs too short to compare anything: {', '.join(short)}")
     stress.check_interrupted()
-    if kind in ("vram", "screen"):
+    if kind in ("core", "screen") and not burn.image_present():
+        raise RuntimeError(f"the gpu-burn image {burn.IMAGE} is missing: run `ctune gpu burn-setup` once")
+    if kind != "vkpeak":
         short = vram_free_check()
         if short:
             raise RuntimeError(short + ": close them, then run the test")
@@ -214,27 +263,50 @@ def test(kind="screen", vram_seconds=300, core_runs=3, budget_bytes=None, note="
     e0, t0 = nvml.energy_j(h), time.time()
     sampler = _Sampler()
     sampler.start()
-    res = {"test": kind, "settings": applied() or "defaults"}
+    settings = applied() or "defaults"
+    max_clock = settings.get("max_clock") if isinstance(settings, dict) else None
+    res = {"test": kind, "settings": settings, "gpu_burn": burn.COMMIT[:7] if kind in ("core", "screen") else None}
     try:
-        with stress.run("gpu", f"gpu-{kind}", res["settings"]) as run:
+        with stress.run("gpu", f"gpu-{kind}", settings) as run:
             if kind in ("core", "screen"):
-                run.update(phase="core")
-                res["core"] = _core(core_runs)
-            if kind in ("vram", "screen"):
+                res["core"] = {}
+                for mode, secs in (("fp32", burn_seconds), ("fp64", fp64_seconds), ("tc", tc_seconds)):
+                    if secs:
+                        run.update(phase=mode)
+                        sampler.part = mode
+                        res["core"][mode] = _burn(mode, secs, h)
+                        res["core"][mode]["telemetry"] = sampler.summary(mode, max_clock)
+                        if not res["core"][mode]["ok"]:
+                            break
+                ran = [v for k, v in res["core"].items() if k != "ok"]
+                res["core"]["ok"] = bool(ran) and all(v["ok"] for v in ran)
+            if kind in ("vram", "screen") and res.get("core", {}).get("ok", True):
                 run.update(phase="vram")
+                sampler.part = "vram"
                 res["vram"] = _vram(vram_seconds, budget_bytes)
+            if kind == "vkpeak":
+                run.update(phase="vkpeak")
+                sampler.part = "vkpeak"
+                res["vkpeak"] = _vkpeak(core_runs)
     finally:
         sampler.stop.set()
         sampler.join()
-    res["telemetry"] = sampler.summary()
+    res["telemetry"] = sampler.summary(max_clock=max_clock)
     res["energy_j"] = round(nvml.energy_j(h) - e0)
     res["duration_s"] = round(time.time() - t0)
     new_xid = xid_errors()[xid_before:]
     res["new_xid_errors"] = new_xid
-    parts = [res[k]["ok"] for k in ("core", "vram") if k in res]
-    res["verdict"] = "green" if all(parts) and not new_xid else "red"
-    if res.get("core", {}).get("fp32_gflops_avg") and res["telemetry"].get("power_w_avg"):
-        res["gflops_per_w"] = round(res["core"]["fp32_gflops_avg"] / res["telemetry"]["power_w_avg"], 1)
+    parts = [res[k]["ok"] for k in ("core", "vram", "vkpeak") if k in res]
+    res["verdict"] = "green" if parts and all(parts) and not new_xid else "red"
+    blocked = [v["errors"][0] for k, v in res.get("core", {}).items() if k != "ok" and v.get("unavailable")]
+    blocked += [res["vram"]["errors"][0]] if res.get("vram", {}).get("unavailable") else []
+    if blocked and not new_xid:
+        res["verdict"] = "inconclusive"   # the test could not run (VRAM held by another app): fix and re-run
+        res["blocked_by"] = blocked
+    fp32 = res.get("core", {}).get("fp32", {})
+    if fp32.get("gflops_median") and fp32.get("telemetry", {}).get("power_w_avg"):
+        res["score_gflops"] = fp32["gflops_median"]
+        res["gflops_per_w"] = round(fp32["gflops_median"] / fp32["telemetry"]["power_w_avg"], 1)
     if record:
         journal.add(DATA, "result", domain="gpu", text=note or f"gpu {kind} test", **res)
     return res

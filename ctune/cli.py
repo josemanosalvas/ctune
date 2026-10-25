@@ -82,12 +82,16 @@ def build():
     s.add_argument("--max-clock", type=int, help="lock the core clock to 0..MHZ")
     s.add_argument("--power-limit", type=float, help="watts")
     g.add_parser("reset", help="offsets 0, unlock clocks, default power limit")
-    s = g.add_parser("test", help="core (vkpeak), vram (memtest_vulkan) or screen (both), with telemetry")
-    s.add_argument("kind", nargs="?", default="screen", choices=["core", "vram", "screen"])
+    s = g.add_parser("test", help="core (gpu-burn, results checked), vram (memtest_vulkan), screen (both), vkpeak")
+    s.add_argument("kind", nargs="?", default="screen", choices=["core", "vram", "screen", "vkpeak"])
+    s.add_argument("--burn-seconds", type=int, default=600, help="gpu-burn FP32 (results checked)")
+    s.add_argument("--fp64-seconds", type=int, default=300, help="gpu-burn FP64 (at least 90 s): low power, expected to sit at the locked clock")
+    s.add_argument("--tc-seconds", type=int, default=0, help="gpu-burn on the tensor cores")
     s.add_argument("--vram-seconds", type=int, default=300)
-    s.add_argument("--core-runs", type=int, default=3)
+    s.add_argument("--core-runs", type=int, default=3, help="vkpeak runs (kind vkpeak)")
     s.add_argument("--detach", action="store_true")
     s.add_argument("--note", default="")
+    g.add_parser("burn-setup", help="build the gpu-burn image (podman, pinned commit, about 4 GB download once)")
     s = g.add_parser("xid", help="NVIDIA Xid errors from the kernel log")
     s.add_argument("--since", default="boot")
 
@@ -99,14 +103,17 @@ def build():
     s.add_argument("--margin", type=int, required=True, help="-30..30, at most 5 away from the current value")
     s.add_argument("--dry-run", action="store_true", help="check the guardrails and print the mailbox word; send nothing")
     c.add_parser("reset", help="restore the boot (BIOS) margin of every core ctune changed (root via pkexec)")
-    s = c.add_parser("test", help="one verified stress-ng thread per core, varied loads and idle gaps, with telemetry")
+    s = c.add_parser("test", help="mprime (Prime95) on one thread per core in turn, CoreCycler-style, with telemetry")
     s.add_argument("--cores", help="comma-separated core numbers (default all)")
     s.add_argument("--seconds-per-core", type=int, default=360)
     s.add_argument("--order", default="sequential", choices=["sequential", "random"])
+    s.add_argument("--workload", default="sse-huge", choices=cpu.WORKLOADS,
+                   help="mprime mode (CoreCycler presets) or stress-ng")
+    s.add_argument("--full-cycle", action="store_true", help="mprime: run each core through every FFT length once")
     s.add_argument("--detach", action="store_true")
     s.add_argument("--note", default="")
 
-    s = sub.add_parser("signoff", help="multi-hour suite: ram, ycruncher, cpu, gpu, combined, idle (about 4 h)")
+    s = sub.add_parser("signoff", help="multi-hour suite: ram, ycruncher, cpu, cpu_heavy, gpu, combined, idle (about 5 h)")
     s.add_argument("--phases", help=f"comma-separated subset of {','.join(signoff.PHASES)}")
     s.add_argument("--minutes", help="per-phase overrides, e.g. ram=120,idle=60")
     s.add_argument("--keep-going", action="store_true", help="run every phase even after a red one")
@@ -114,13 +121,28 @@ def build():
     s.add_argument("--detach", action="store_true")
     s.add_argument("--note", default="")
     sub.add_parser("test-status", help="the running test and its phase, or the last test result")
+    sub.add_parser("test-stop", help="stop the running detached test (SIGINT, then systemd cleans up)")
+    s = sub.add_parser("boot-check", help="record a test cut short by a crash; save this boot's hardware-error lines")
+    s.add_argument("--install", action="store_true", help="install and enable the user unit that runs this at boot")
     s = sub.add_parser("_run", help=argparse.SUPPRESS)
     s.add_argument("spec")
     return ap
 
 
+def _interrupt_on_terminate():
+    """SIGTERM and SIGHUP (a closed terminal, a killed MCP client) raise KeyboardInterrupt, so the `finally` blocks
+    that stop stress loads still run. Python's default SIGTERM exits without them."""
+    import signal
+
+    def raise_interrupt(*_):
+        raise KeyboardInterrupt
+    for s in (signal.SIGTERM, signal.SIGHUP):
+        signal.signal(s, raise_interrupt)
+
+
 def main(argv=None):
     a = build().parse_args(argv)
+    _interrupt_on_terminate()
     if a.cmd == "status":
         st = mem.status()
         st["test"] = runner.status()
@@ -170,8 +192,12 @@ def main(argv=None):
         elif a.gcmd == "reset":
             _out(gpu.reset())
         elif a.gcmd == "test":
-            kw = {"kind": a.kind, "vram_seconds": a.vram_seconds, "core_runs": a.core_runs, "note": a.note}
+            kw = {"kind": a.kind, "burn_seconds": a.burn_seconds, "fp64_seconds": a.fp64_seconds,
+                  "tc_seconds": a.tc_seconds, "vram_seconds": a.vram_seconds, "core_runs": a.core_runs, "note": a.note}
             _out(runner.start("gpu_test", **kw) if a.detach else gpu.test(**kw))
+        elif a.gcmd == "burn-setup":
+            from ctune.gpu import burn
+            _out(burn.setup())
         elif a.gcmd == "xid":
             _out(gpu.xid_errors(a.since))
     elif a.cmd == "cpu":
@@ -185,7 +211,8 @@ def main(argv=None):
             _out(cpu.reset())
         elif a.ccmd == "test":
             cores = [int(x) for x in a.cores.split(",")] if a.cores else None
-            kw = {"cores": cores, "seconds_per_core": a.seconds_per_core, "order": a.order, "note": a.note}
+            kw = {"cores": cores, "seconds_per_core": a.seconds_per_core, "order": a.order, "note": a.note,
+                  "workload": a.workload, "full_cycle": a.full_cycle}
             _out(runner.start("cpu_test", **kw) if a.detach else cpu.test(**kw))
     elif a.cmd == "signoff":
         kw = {"phases": a.phases.split(",") if a.phases else None, "keep_going": a.keep_going, "note": a.note,
@@ -194,6 +221,10 @@ def main(argv=None):
         _out(runner.start("signoff", **kw) if a.detach else signoff.run(**kw))
     elif a.cmd == "test-status":
         _out(runner.status())
+    elif a.cmd == "test-stop":
+        _out(runner.stop())
+    elif a.cmd == "boot-check":
+        _out(runner.install_boot_check() if a.install else runner.boot_check())
     elif a.cmd == "_run":
         _out(runner.dispatch(a.spec))
     return 0

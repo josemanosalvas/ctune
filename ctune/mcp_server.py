@@ -95,14 +95,20 @@ TOOLS = {
                   lambda a: gpu.apply(a.get("core_offset"), a.get("mem_offset"), a.get("max_clock"), a.get("power_limit"))),
     "gpu_reset": ("Reset GPU tuning: offsets 0, clocks unlocked, default power limit (root, password prompt).",
                   _obj(), lambda a: gpu.reset()),
-    "gpu_test": ("Run a GPU test with 1 Hz telemetry and record the result in the journal. kind: core (vkpeak FP32 "
-                 "score and load, about 2 min per run), vram (memtest_vulkan), screen (both). Returns verdict green/red, "
-                 "score, average clock, power, efficiency and any new Xid errors.",
-                 _obj({"kind": {"type": "string", "enum": ["core", "vram", "screen"]}, "vram_seconds": {"type": "integer"},
+    "gpu_test": ("GPU stability test with 1 Hz telemetry, recorded in the journal. kind: core runs gpu-burn (cuBLAS "
+                 "matrix products whose results are compared, so silent compute errors count): FP32 for burn_seconds "
+                 "(default 600), then FP64 for fp64_seconds (default 300, at least 90; low power, expected to sit at the lock) "
+                 "and tensor cores for tc_seconds (default 0). vram runs memtest_vulkan; screen runs both (about 21 "
+                 "min, detached by default; poll test_status); vkpeak gives the old throughput score only. Stops at "
+                 "83 °C. Returns verdict green/red, Gflop/s, at_lock_share, power, efficiency and new Xid errors.",
+                 _obj({"kind": {"type": "string", "enum": ["core", "vram", "screen", "vkpeak"]},
+                       "burn_seconds": {"type": "integer"}, "fp64_seconds": {"type": "integer"},
+                       "tc_seconds": {"type": "integer"}, "vram_seconds": {"type": "integer"},
                        "core_runs": {"type": "integer"}, "detach": {"type": "boolean"}, "note": S}),
-                 lambda a: _run("gpu_test", gpu.test, a.get("detach", False), kind=a.get("kind", "screen"),
-                                vram_seconds=a.get("vram_seconds", 300), core_runs=a.get("core_runs", 3),
-                                note=a.get("note", ""))),
+                 lambda a: _run("gpu_test", gpu.test, a.get("detach", True), kind=a.get("kind", "screen"),
+                                burn_seconds=a.get("burn_seconds", 600), fp64_seconds=a.get("fp64_seconds", 300),
+                                tc_seconds=a.get("tc_seconds", 0), vram_seconds=a.get("vram_seconds", 300),
+                                core_runs=a.get("core_runs", 3), note=a.get("note", ""))),
     "gpu_xid": ("NVIDIA Xid errors from the kernel log ('boot' or a journalctl --since value).",
                 _obj({"since": S}), lambda a: gpu.xid_errors(a.get("since", "boot"))),
     # cpu
@@ -122,27 +128,34 @@ TOOLS = {
                   lambda a: cpu.apply(a["core"], a["margin"], a.get("dry_run", False))),
     "cpu_reset": ("Restore the boot (BIOS) margin of every core ctune changed this boot (root, password prompt).",
                   _obj(), lambda a: cpu.reset()),
-    "cpu_test": ("Per-core stability test, recorded in the journal. One self-checking stress-ng thread is pinned to each "
-                 "core in turn (FFT, int64, matrix, wide vector, FMA, hash, then a bursty 25 % load), with idle gaps between "
-                 "phases and 1 Hz per-core telemetry. Takes about seconds_per_core (default 360) per core. Returns "
-                 "verdict green/red, red cores, per-phase clocks and voltages, and new corrected machine-check errors.",
+    "cpu_test": ("Per-core stability test, recorded in the journal. Prime95 (mprime) runs one thread pinned to each "
+                 "core in turn, suspended 1 s in every 10 so the core keeps leaving and re-entering boost, as "
+                 "CoreCycler does. workload: sse-huge (default: least heat, highest boost), avx2-1344k (heavy), "
+                 "sse-heavyshort, avx2-moderate, sse-all, or stress-ng (the older mix). seconds_per_core defaults to "
+                 "360; full_cycle runs each core until every FFT length has passed once (up to 40 min). Returns "
+                 "verdict green/red, red cores, passed and failed FFT sizes, per-phase clocks and voltages, and new "
+                 "corrected machine-check errors.",
                  _obj({"cores": {"type": "array", "items": {"type": "integer"}}, "seconds_per_core": {"type": "integer"},
-                       "order": {"type": "string", "enum": ["sequential", "random"]}, "detach": {"type": "boolean"},
-                       "note": S}),
-                 lambda a: _run("cpu_test", cpu.test, a.get("detach", False), cores=a.get("cores"),
+                       "order": {"type": "string", "enum": ["sequential", "random"]},
+                       "workload": {"type": "string", "enum": cpu.WORKLOADS}, "full_cycle": {"type": "boolean"},
+                       "detach": {"type": "boolean"}, "note": S}),
+                 lambda a: _run("cpu_test", cpu.test, a.get("detach", True), cores=a.get("cores"),
                                 seconds_per_core=a.get("seconds_per_core", 360), order=a.get("order", "sequential"),
+                                workload=a.get("workload", "sse-huge"), full_cycle=a.get("full_cycle", False),
                                 note=a.get("note", ""))),
     # suite
     "signoff": ("Multi-hour sign-off that ends a campaign, against every domain's current settings: ram (60 min), "
-                "ycruncher (45), cpu per-core cycle (about 50), gpu (20), combined RAM + GPU + NVMe load (30), idle "
-                "(30). Stops at the first red phase unless keep_going. Always runs detached: poll test_status; the "
+                "ycruncher (45), cpu per-core cycle (about 50), gpu (75), combined RAM + GPU + NVMe load (30), idle "
+                "(30). cpu_heavy (25) runs mprime AVX2 per core after the SSE cpu phase. Stops at the first red phase unless keep_going. Always runs detached: poll test_status; the "
                 "result lands in the journal. minutes overrides per phase, e.g. {\"ram\": 120}.",
                 _obj({"phases": {"type": "array", "items": {"type": "string", "enum": list(signoff.PHASES)}},
                       "minutes": {"type": "object"}, "keep_going": {"type": "boolean"}, "note": S}),
                 lambda a: runner.start("signoff", phases=a.get("phases"), minutes=a.get("minutes"),
                                        keep_going=a.get("keep_going", False), note=a.get("note", ""))),
-    "test_status": ("The test running now (domain, phase, elapsed minutes, log tail), or the last test result. Also "
-                    "records a test that a crash or reboot cut short.", _obj(), lambda a: runner.status()),
+    "test_status": ("The test running now (domain, phase, elapsed minutes, log tail), failed runs, and the last test "
+                    "result. Also records a test that a crash or reboot cut short.", _obj(), lambda a: runner.status()),
+    "test_stop": ("Stop the running detached test. The test gets SIGINT and stops its loads; systemd kills whatever is "
+                  "left after 90 s. The journal records that it was stopped.", _obj(), lambda a: runner.stop()),
 }
 
 
@@ -186,6 +199,12 @@ def handle(msg):
 
 
 def main():
+    import signal
+
+    def raise_interrupt(*_):   # SIGTERM/SIGHUP from the client: let a running inline test's finally stop its loads
+        raise KeyboardInterrupt
+    for s in (signal.SIGTERM, signal.SIGHUP):
+        signal.signal(s, raise_interrupt)
     for line in sys.stdin:
         line = line.strip()
         if not line:

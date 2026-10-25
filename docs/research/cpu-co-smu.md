@@ -51,7 +51,7 @@ Each was cloned and pinned to a commit on 2026-10-25.
 - 6 minutes per core (L79). Random order on CPUs with 8 or fewer cores (L94). 15 s between cores (L197).
 - Periodic suspend/resume to create load-to-idle transitions (L82-89).
 - On an error, skip the rest of that core and continue (L117).
-- ctune keeps this structure and swaps Prime95 for stress-ng stressors that check their own results (`stress-ng --verifiable`). It mixes integer, double-precision FFT, matrix, wide-vector, FMA and hash work, adds a bursty phase at 25 % load with random busy slices of 0 to 0.5 s, and puts idle gaps between phases. With fixed 10 to 50 ms slices the pm_table never showed more than 3.7 GHz on the tested core. Random slices reached 4.2 GHz, so they cover both short wake-ups and full-boost bursts.
+- ctune now runs mprime (Prime95 for Linux) the same way: SSE Huge FFTs by default, one thread pinned per core, suspended 1 s in every 10. The settings and their sources are in [reuse-tools.md](reuse-tools.md). The earlier stress-ng mix (integer, FFT, matrix, wide-vector, FMA and hash stressors that check their own results, plus a bursty phase at 25 % load with random 0 to 0.5 s busy slices) is still available as the `stress-ng` workload. With fixed 10 to 50 ms slices the pm_table never showed more than 3.7 GHz on the tested core; random slices reached 4.2 GHz.
 
 ## Open points
 - **0x48 has one source.** `ctune cpu probe` checks it: the readback must equal the BIOS Curve Optimizer of every core, from the latest snapshot. The root helper refuses to write until a probe in the same boot has matched. Re-run the probe after every BIOS or SMU firmware change.

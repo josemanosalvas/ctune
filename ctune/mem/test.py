@@ -23,8 +23,8 @@ def _settings():
     return {"snapshot": s[-1] if s else None, "bios": stress._rd("/sys/class/dmi/id/bios_version")}
 
 
-def _gpu_heat():
-    """(load, None) or (None, why the GPU heat load cannot run)."""
+def _gpu_heat(seconds):
+    """(load, None) or (None, why the GPU heat load cannot run). It ends by itself 5 min after the phase if ctune dies."""
     from ctune.gpu import api as gpu
     if not os.path.exists(gpu.MEMTEST):
         return None, f"{gpu.MEMTEST} is missing"
@@ -34,8 +34,8 @@ def _gpu_heat():
         return None, f"GPU unavailable: {e}"
     if short:
         return None, short
-    return stress.Load("gpu-heat (memtest_vulkan)", gpu.vram_cmd(), gpu.parse_vram, cwd=os.path.dirname(gpu.MEMTEST),
-                       optional=True), None
+    return stress.Load("gpu-heat (memtest_vulkan)", ["timeout", "-s", "INT", str(seconds + 300)] + gpu.vram_cmd(),
+                       gpu.parse_vram, cwd=os.path.dirname(gpu.MEMTEST), optional=True), None
 
 
 def ram_loads(seconds, mb, gpu_heat=True, disk=False):
@@ -43,13 +43,13 @@ def ram_loads(seconds, mb, gpu_heat=True, disk=False):
     loads = [stress.Load("stressapptest", stress.stressapptest_cmd(mb, seconds), stress.parse_sat, self_timed=True)]
     notes = []
     if gpu_heat:
-        g, why = _gpu_heat()
+        g, why = _gpu_heat(seconds)
         if g:
             loads.append(g)
         else:
             notes.append(f"no GPU heat load: {why}; the DIMMs ran cooler than in a game")
     if disk:
-        loads.append(stress.DiskReader())
+        loads.append(stress.DiskReader(seconds=seconds))
     return loads, notes
 
 

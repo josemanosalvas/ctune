@@ -29,8 +29,8 @@ You run a **campaign** in one **domain** (mem, gpu or cpu): a chain of single-va
    - mem: `mem_test` (screen, or fabric for FCLK steps and after a BIOS flash), then `errors` after 300 s.
    - cpu: `cpu_test` with `cores` set to the changed core, then `errors` after 300 s.
    - gpu: `gpu_test` (screen).
-   **Green** means no crash, zero corrected machine-check errors, no new Xid or stress-ng errors, and a score at least as good as the baseline's. The cpu score is `eff_ghz_avg` per phase. **Red** means anything else, and you record the error source.
-6. **Decide.** Write a `result` entry. Green becomes the new baseline. Red rolls back to the baseline value (`cpu_apply`, `gpu_apply` or the BIOS) and records the limit. A campaign ends with a **sign-off** of its final configuration: `signoff` (about 4 h, detached, poll `test_status`), then a few days of the user's real workload.
+   **Green** means no crash, zero corrected machine-check errors, no new Xid or load errors, and a score at least as good as the baseline's, within about 1 %. The cpu score is `eff_ghz_avg` of the `p95` phase of the same core, compared only with a baseline result of the same `workload`. **Red** means anything else, and you record the error source. **Inconclusive** means the test could not run or was too short to judge (`blocked_by` or the result's `inconclusive` says why): fix that and run it again, with no rollback.
+6. **Decide.** Write a `result` entry. Green becomes the new baseline. Red rolls back to the baseline value (`cpu_apply`, `gpu_apply` or the BIOS) and records the limit. A campaign ends with a **sign-off** of its final configuration: `signoff` (about 5 h 15 min, detached, poll `test_status`), then a few days of the user's real workload.
 
 ## Guardrails
 

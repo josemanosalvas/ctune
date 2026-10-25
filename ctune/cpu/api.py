@@ -7,6 +7,7 @@ import json
 import os
 import random
 import re
+import shutil
 import statistics
 import subprocess
 import sys
@@ -16,12 +17,13 @@ import time
 
 from ctune.core import errors, journal, stress
 from ctune.core.paths import DATA
-from ctune.cpu import smu
+from ctune.cpu import mprime, smu
 
 STATE = os.path.join(DATA, "cpu_state.json")
 HELPER = os.path.join(os.path.dirname(os.path.abspath(__file__)), "apply.py")
 
-# One stress-ng stressor at a time, one thread, pinned to the first logical CPU of the core under test. Every
+# The default per-core load is mprime (Prime95) in CoreCycler's modes (ctune/cpu/mprime.py). The "stress-ng" workload
+# is the older alternative: one stress-ng stressor at a time, one thread, pinned to the first logical CPU. Every
 # stressor here checks its own results with --verify (`stress-ng --verifiable`). The mix covers integer, FP, wide
 # vector, FMA and hash work. "bursty" runs at 25 % load in random busy slices of 0 to 0.5 s, so the core keeps
 # waking from idle and ramping into boost, which is where Curve Optimizer errors show up (fixed 10 to 50 ms slices
@@ -36,7 +38,8 @@ PHASES = [
     ("bursty", ["--cpu", "1", "--cpu-method", "int64", "--cpu-load", "25", "--cpu-load-slice", "0"]),
 ]
 IDLE_GAP_S = 3          # idle between phases: a load-to-idle transition
-BETWEEN_CORES_S = 10    # idle between cores
+BETWEEN_CORES_S = 15    # idle between cores (CoreCycler delayBetweenCores)
+WORKLOADS = sorted(mprime.MODES) + ["stress-ng"]
 NCORES = 8
 
 
@@ -307,7 +310,7 @@ class _Sampler(threading.Thread):
 
     def summary(self, core):
         out = {}
-        for phase in [p for p, _ in PHASES] + ["idle"]:
+        for phase in dict.fromkeys(r[1] for r in self.rows if r[0] == core):
             rows = [r[2] for r in self.rows if r[0] == core and r[1] == phase]
             if not rows:
                 continue
@@ -322,9 +325,14 @@ class _Sampler(threading.Thread):
         return out
 
 
-def test(cores=None, seconds_per_core=360, order="sequential", note="", record=True):
-    """Cycle a single verified stress-ng thread through the given cores (default all), each core through PHASES with
-    idle gaps. Red = a stress-ng error, any new corrected machine-check error, or a crash (recorded on the next boot)."""
+def test(cores=None, seconds_per_core=360, order="sequential", note="", record=True, workload="sse-huge",
+         full_cycle=False):
+    """One thread per core, the given cores in turn (default all). workload: an mprime mode (default sse-huge,
+    CoreCycler's default) or "stress-ng". full_cycle (mprime): run each core until every FFT length has passed once,
+    capped at 40 min, instead of seconds_per_core. Red = a load error, any new corrected machine-check error, or a
+    crash (recorded on the next boot)."""
+    if workload not in WORKLOADS:
+        raise ValueError(f"workload is one of {WORKLOADS}")
     check_interrupted()
     topo, _ = smu.topology()
     cores = list(range(len(topo))) if cores is None else [int(c) for c in cores]
@@ -335,14 +343,19 @@ def test(cores=None, seconds_per_core=360, order="sequential", note="", record=T
         random.shuffle(cores)
     elif order != "sequential":
         raise ValueError("order is 'sequential' or 'random'")
-    if seconds_per_core < 30:
-        raise ValueError("seconds_per_core must be at least 30")
+    if seconds_per_core < (30 if workload == "stress-ng" else 60):
+        raise ValueError("seconds_per_core must be at least 60 for mprime (one SSE Huge test takes about 30 s) and "
+                         "30 for stress-ng")
     phase_s = max(5, int((seconds_per_core - IDLE_GAP_S * len(PHASES)) / len(PHASES)))
+    if workload != "stress-ng":
+        phase_s = None
     all_cpus = {cpu for cpus in topo.values() for cpu in cpus}
     cur = current()
     settings = {"margins": cur["cores"], "source": cur["source"]}
-    res = {"test": "co-cycle", "cores": cores, "seconds_per_core": seconds_per_core, "phase_s": phase_s,
-           "phases": [p for p, _ in PHASES], "settings": settings, "cpufreq": _cpufreq()}
+    res = {"test": "co-cycle", "workload": workload, "cores": cores, "seconds_per_core": seconds_per_core,
+           "full_cycle": full_cycle, "phase_s": phase_s,
+           "phases": [p for p, _ in PHASES] if workload == "stress-ng" else [workload], "settings": settings,
+           "cpufreq": _cpufreq()}
     t0 = time.time()
     mce_all_before = errors.counts()
     own_mask = os.sched_getaffinity(0)
@@ -357,18 +370,27 @@ def test(cores=None, seconds_per_core=360, order="sequential", note="", record=T
                 os.sched_setaffinity(0, (all_cpus - set(avoid)) or all_cpus)
                 before = errors.counts_by_cpu()
                 phases = {}
-                for name, args in PHASES:
-                    run.update(phase=name, core=core)
-                    sampler.mark(core, name, avoid)
-                    phases[name] = r = _run_stress(cpu, args, phase_s, tmp)
+                if workload == "stress-ng":
+                    for name, args in PHASES:
+                        run.update(phase=name, core=core)
+                        sampler.mark(core, name, avoid)
+                        phases[name] = r = _run_stress(cpu, args, phase_s, tmp)
+                        sampler.mark(core, "idle", avoid)
+                        time.sleep(IDLE_GAP_S)
+                        if not r["ok"]:
+                            break   # skip the rest of this core, like CoreCycler's skipCoreOnError
+                else:
+                    run.update(phase=workload, core=core)
+                    wd = tempfile.mkdtemp(prefix=f"mprime-core{core}-", dir=tmp)
+                    phases[workload] = mprime.run_core(cpu, workload, seconds_per_core, wd, full_cycle,
+                                                       mark=lambda ph, c=core, a=avoid: sampler.mark(c, ph, a))
                     sampler.mark(core, "idle", avoid)
-                    time.sleep(IDLE_GAP_S)
-                    if not r["ok"]:
-                        break   # skip the rest of this core, like CoreCycler's skipCoreOnError
                 delta = errors.delta_by_cpu(before, errors.counts_by_cpu())
                 ok = all(p["ok"] for p in phases.values()) and not delta
+                unsure = not ok and not delta and all(p["ok"] or p.get("inconclusive") for p in phases.values())
                 per_core.append({"core": core, "cpu": cpu, "margin": cur["cores"][core],
-                                 "verdict": "green" if ok else "red", "phases": phases, "mce_delta_by_cpu": delta,
+                                 "verdict": "green" if ok else "inconclusive" if unsure else "red", "phases": phases,
+                                 "mce_delta_by_cpu": delta,
                                  "telemetry": sampler.summary(core)})
                 if i < len(cores) - 1:
                     sampler.mark(None, None, ())
@@ -377,10 +399,7 @@ def test(cores=None, seconds_per_core=360, order="sequential", note="", record=T
         sampler.stop.set()
         sampler.join()
         os.sched_setaffinity(0, own_mask)
-        try:
-            os.rmdir(tmp)
-        except OSError:
-            pass
+        shutil.rmtree(tmp, ignore_errors=True)
     after = errors.counts()
     new_mce = {b: n - mce_all_before.get(b, 0) for b, n in after.items() if n > mce_all_before.get(b, 0)}
     res["per_core"] = per_core
@@ -390,6 +409,8 @@ def test(cores=None, seconds_per_core=360, order="sequential", note="", record=T
     red = [c["core"] for c in per_core if c["verdict"] == "red"]
     res["red_cores"] = red
     res["verdict"] = "green" if not red and not new_mce and not res["kernel_hw_errors"] else "red"
+    if res["verdict"] == "green" and any(c["verdict"] == "inconclusive" for c in per_core):
+        res["verdict"] = "inconclusive"
     res["note"] = ("corrected errors are also polled every check_interval; call `errors` again 300 s after the test "
                    "before trusting a zero")
     if record:

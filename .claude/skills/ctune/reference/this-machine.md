@@ -15,7 +15,7 @@ Facts that `status` and the snapshots cannot show. Read live values from the too
   - An update to F19c (AGESA 1.2.0.12) is planned.
 - **CPU.** ctune's runtime Curve Optimizer path was checked on F16b with SMU firmware 56.74.0 on 2026-10-25. `cpu_probe` read all eight BIOS margins back exactly. A no-op `cpu_apply` of core 1 at -30 read back -30, with zero corrected errors afterwards. The F19c flash changes the SMU firmware, so the probe has to match again before the first write.
 - **GPU.** MSI RTX 3080 Ti Suprim X: 400 W default power limit (100 to 440 W allowed), max boost 2145 MHz.
-  - Stock baseline on 2026-10-25 (`gpu_test` screen, 1 core run): FP32 26,666 GFLOPS, 1,639 MHz average under load, 307 W average, VRAM 768 GB/s with no errors, 78 °C max.
+  - Stock baseline on 2026-10-25, measured with vkpeak before gpu-burn replaced it (1 run): FP32 26,666 GFLOPS, 1,639 MHz average under load, 307 W average, VRAM 768 GB/s with no errors, 78 °C max.
   - The power limit caps the clock about two thirds of the time under load, so an undervolt has real headroom.
   - The GPU controls its own fans; CoolerControl uses GPU temperatures as inputs for the case-fan curves.
 - **Memory pressure.** zram swap holds about 10 GB of desktop memory during normal use, so a RAM test with apps open covers only about half the RAM. An ollama `llama-server` can hold about 6 GB of VRAM, which blocks the VRAM test.

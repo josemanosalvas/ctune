@@ -22,7 +22,12 @@ Search, in this order:
 ## Reading results
 - `limiter_share.power cap` near 1 means the power limit sets the clock. An undervolt lowers it.
 - Xid errors: 13 (graphics exception), 31 (memory fault), 43 (GPU stopped), 45, 61/62 (microcontroller) mark a red step. 79 (fell off the bus) needs a reboot.
-- vkpeak FP32 is power-heavy and short. Games, ray tracing especially, are the strictest test, so after `signoff` the user plays their own games for a few hours.
+- `gpu_test` core runs gpu-burn: cuBLAS matrix products whose results are compared bitwise, so an undervolt that computes wrong without crashing turns the step red.
+- FP32 draws a lot of power and is expected to sit at the power cap. FP64 draws little and is expected to sit at the locked clock, which tests the top V/F point. Both are expectations, not yet measured on this card. Check `core.fp64.telemetry.at_lock_share`: the top point counts as tested only when it is near 1. If it is low, `limiter_share` shows what held the clock down. `at_lock_share` appears only when a `max_clock` is applied this boot.
+- Before the first undervolt step, record a stock baseline with `gpu_test`. Old vkpeak scores do not compare with gpu-burn's `score_gflops`.
+- Tune the core with `mem_offset` at 0: gpu-burn's results sit in VRAM, so a memory overclock blurs where an error came from.
+- Verdict `inconclusive` means the test could not run, usually because another app holds VRAM (`blocked_by` names it). Ask the user to close it and run the test again. Do not roll back.
+- gpu-burn never touches the RT cores, ROPs or TMUs. Games, ray tracing especially, stay the strictest test, so after `signoff` the user plays their own games for a few hours.
 
 ## Power limit
 Keep the default unless the user wants an efficiency target. Lowering it (for example to 320 W) after a good undervolt trades a few percent of performance for noise and heat.

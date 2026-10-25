@@ -1,0 +1,27 @@
+
+==========
+== CUDA ==
+==========
+
+CUDA Version 13.4.3
+
+Container image Copyright (c) 2016-2023, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+
+This container image and its contents are governed by the NVIDIA Deep Learning Container License.
+By pulling and using the container, you accept the terms and conditions of this license:
+https://developer.nvidia.com/ngc/nvidia-deep-learning-container-license
+
+A copy of this license is made available in this container at /NGC-DL-CONTAINER-LICENSE for your convenience.
+
+GPU 0: NVIDIA GeForce RTX 3080 Ti (UUID: GPU-fa9f0f08-73aa-d991-ff7b-fe358ec07953)
+Couldn't init a GPU test: Error in A alloc (gpu_burn-drv.cpp:201): out of memory
+Using compare file: compare.fatbin
+Burning for 20 seconds.
+Initialized device 0 with 11961 MB of memory (1452 MB available, using 1100 MB of it), using FLOATS
+Results are 268435456 bytes each, thus performing 2 iterations
+read[0] error 0
+
+No clients are alive!  Aborting
+Using compare file: compare.fatbin
+Burning for 20 seconds.
+5.0%  proc'd: -1 (0 Gflop/s)   errors: 1792925923  (DIED!)  temps: 54 C 

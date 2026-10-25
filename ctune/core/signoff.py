@@ -3,8 +3,9 @@
 Phases, in order (minutes are defaults):
   ram       60  stressapptest -W over the free RAM, memtest_vulkan heating the case
   ycruncher 45  y-cruncher stress, all tests on all threads with most of the free RAM (AVX2, IMC, VRM load)
-  cpu       ~50 one self-checking stress-ng thread per core in random order, idle gaps (Curve Optimizer)
-  gpu       20  vkpeak runs, then memtest_vulkan (core and VRAM)
+  cpu       50  mprime SSE Huge FFTs, one thread per core in random order, suspended 1 s in 10 (Curve Optimizer)
+  cpu_heavy 25  mprime AVX2 1344K, the heavy-load counterpart
+  gpu       75  gpu-burn FP32 60 %, tensor cores 13 %, FP64 13 % (results checked), memtest_vulkan 13 %
   combined  30  stressapptest + memtest_vulkan + NVMe reads at once (fabric and PCIe)
   idle      30  nothing running; an unstable fabric or Curve Optimizer often freezes or reboots here
 
@@ -17,8 +18,8 @@ import time
 from ctune.core import journal, stress
 from ctune.core.paths import DATA
 
-PHASES = ("ram", "ycruncher", "cpu", "gpu", "combined", "idle")
-MINUTES = {"ram": 60, "ycruncher": 45, "cpu": 50, "gpu": 20, "combined": 30, "idle": 30}
+PHASES = ("ram", "ycruncher", "cpu", "cpu_heavy", "gpu", "combined", "idle")
+MINUTES = {"ram": 60, "ycruncher": 45, "cpu": 50, "cpu_heavy": 25, "gpu": 75, "combined": 30, "idle": 30}
 
 
 def _settings():
@@ -71,21 +72,26 @@ def _phase(name, minutes, mb_cap=None):
                                       cwd=os.path.dirname(stress.YCRUNCHER))], seconds)
         r["tested_mb"] = mb
         return r
-    if name == "cpu":
+    if name in ("cpu", "cpu_heavy"):
         from ctune.cpu import api as cpu
         ncores = len(cpu.smu.topology()[0])
-        per_core = max(60, int(seconds / ncores))
+        per_core = max(60, int(seconds / ncores) - cpu.BETWEEN_CORES_S)
         snap = stress.error_snapshot()
-        r = cpu.test(None, per_core, order="random", record=False)
+        r = cpu.test(None, per_core, order="random", record=False,
+                     workload="sse-huge" if name == "cpu" else "avx2-1344k")
         r["errors"] = stress.error_delta(snap)
         r["ok"] = r["verdict"] == "green" and r["errors"]["clean"]
+        r["inconclusive"] = r["verdict"] == "inconclusive" and r["errors"]["clean"]
         return r
     if name == "gpu":
         from ctune.gpu import api as gpu
         snap = stress.error_snapshot()
-        r = gpu.test("screen", vram_seconds=max(60, seconds - 6 * 60), core_runs=3, record=False)
+        r = gpu.test("screen", burn_seconds=max(60, int(seconds * 0.60)), tc_seconds=max(30, int(seconds * 0.13)),
+                     fp64_seconds=max(90, int(seconds * 0.13)), vram_seconds=max(60, int(seconds * 0.13)),
+                     record=False)
         r["errors"] = stress.error_delta(snap)
         r["ok"] = r["verdict"] == "green" and r["errors"]["clean"]
+        r["inconclusive"] = r["verdict"] == "inconclusive" and r["errors"]["clean"]
         return r
     if name == "combined":
         from ctune.mem import test as memtest
@@ -117,18 +123,43 @@ def run(phases=None, minutes=None, keep_going=False, note="", mb=None):
     res = {"test": "signoff", "mb_cap": mb, "phases": phases, "minutes": {p: mins[p] for p in phases}, "settings": settings,
            "started": stress.now(), "results": {}}
     t0 = time.time()
+
+    def finish(stopped_in=None):
+        res["duration_min"] = round((time.time() - t0) / 60, 1)
+        res["red_phases"] = [p for p, v in res["results"].items() if not v["ok"] and not v.get("inconclusive")]
+        res["inconclusive_phases"] = [p for p, v in res["results"].items() if v.get("inconclusive")]
+        res["skipped_phases"] = [p for p in phases if p not in res["results"]]
+        if stopped_in:
+            res["verdict"], res["stopped_in"] = "stopped", stopped_in   # never green: the run did not finish
+        elif res["red_phases"]:
+            res["verdict"] = "red"
+        elif res["inconclusive_phases"] or res["skipped_phases"]:
+            res["verdict"] = "inconclusive"
+        else:
+            res["verdict"] = "green"
+        journal.add(DATA, "result", domain="signoff", text=note or "sign-off", **res)
+        return res
+
     with stress.run("signoff", "signoff", settings) as r:
-        for p in phases:
-            r.update(phase=p, minutes=mins[p], phase_started=stress.now())
-            try:
-                res["results"][p] = _phase(p, mins[p], mb)
-            except Exception as e:
-                res["results"][p] = {"ok": False, "errors": [f"{type(e).__name__}: {e}"]}
-            if not res["results"][p]["ok"] and not keep_going:
-                break
-    res["duration_min"] = round((time.time() - t0) / 60, 1)
-    res["red_phases"] = [p for p, v in res["results"].items() if not v["ok"]]
-    res["skipped_phases"] = [p for p in phases if p not in res["results"]]
-    res["verdict"] = "green" if not res["red_phases"] and not res["skipped_phases"] else "red"
-    journal.add(DATA, "result", domain="signoff", text=note or "sign-off", **res)
-    return res
+        p = None
+        try:
+            for p in phases:
+                r.update(phase=p, minutes=mins[p], phase_started=stress.now())
+                try:
+                    res["results"][p] = _phase(p, mins[p], mb)
+                except Exception as e:
+                    res["results"][p] = {"ok": False, "errors": [f"{type(e).__name__}: {e}"]}
+                v = res["results"][p]
+                # one note per finished phase, so a stop or a crash later in the run cannot lose it
+                journal.add(DATA, "note", domain="signoff", text=f"sign-off phase {p}: "
+                            f"{'green' if v['ok'] else 'inconclusive' if v.get('inconclusive') else 'red'}",
+                            phase=p, ok=v["ok"], inconclusive=v.get("inconclusive", False),
+                            errors=v.get("errors") if isinstance(v.get("errors"), list) else
+                            (v.get("errors") or {}).get("by_subsystem"))
+                r.update(done={q: res["results"][q]["ok"] for q in res["results"]})
+                if not v["ok"] and not v.get("inconclusive") and not keep_going:
+                    break
+        except KeyboardInterrupt:
+            finish(stopped_in=p)
+            raise
+    return finish()

@@ -105,6 +105,46 @@ class OptionalLoad(unittest.TestCase):
         self.assertFalse(r["loads"][0]["ok"])
 
 
+BURN_OK = ("Using compare file: compare.fatbin\nBurning for 20 seconds.\n"
+           "Initialized device 0 with 12542 MB of memory (9000 MB available, using 8100 MB of it), using FLOATS\n"
+           "Results are 268435456 bytes each, thus performing 29 iterations\n"
+           "10.0%  proc'd: 290 (20100 Gflop/s)   errors: 0   temps: 60 C \r"
+           "55.0%  proc'd: 3190 (21800 Gflop/s)   errors: 0   temps: 70 C \r"
+           "100.0%  proc'd: 5800 (21700 Gflop/s)   errors: 0   temps: 74 C \n"
+           "Killing processes with SIGTERM (soft kill)\nFreed memory for dev 0\nUninitted cublas\ndone\n\n"
+           "Tested 1 GPUs:\n\tGPU 0: OK\n")
+BURN_OOM = open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "fixtures", "gpu_burn_oom.txt")).read() \
+    if os.path.exists(os.path.join(os.path.dirname(os.path.abspath(__file__)), "fixtures", "gpu_burn_oom.txt")) else ""
+
+
+class GpuBurnParse(unittest.TestCase):
+    def setUp(self):
+        from ctune.gpu import burn
+        self.burn = burn
+
+    def test_ok(self):
+        r = self.burn.parse(0, BURN_OK, False)
+        self.assertTrue(r["ok"], r)
+        self.assertEqual((r["iterations"], r["final"], r["gflops_median"]), (29, "OK", 21750.0))
+
+    def test_faulty(self):
+        bad = BURN_OK.replace("errors: 0   temps: 70", "errors: 12  (WARNING!)  temps: 70").replace("GPU 0: OK",
+                                                                                                    "GPU 0: FAULTY")
+        r = self.burn.parse(0, bad, False)
+        self.assertFalse(r["ok"])
+        self.assertFalse(r["unavailable"])
+
+    def test_one_slot_compares_nothing(self):
+        r = self.burn.parse(0, BURN_OK.replace("performing 29 iterations", "performing 1 iterations"), False)
+        self.assertFalse(r["ok"])
+
+    @unittest.skipUnless(BURN_OOM, "fixture missing")
+    def test_out_of_vram_is_unavailable(self):
+        r = self.burn.parse(123, BURN_OOM, False)
+        self.assertFalse(r["ok"])
+        self.assertTrue(r["unavailable"])
+
+
 class Sizing(unittest.TestCase):
     def test_size_leaves_reserve(self):
         real = stress.meminfo
@@ -120,3 +160,58 @@ class Sizing(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class ReviewRegressions(unittest.TestCase):
+    """Defects found by the 2026-10-25 review, kept fixed."""
+
+    def test_unknown_unit_state_keeps_a_live_marker(self):
+        real = stress.unit_state
+        stress.unit_state = lambda unit: None          # the user manager cannot be asked
+        try:
+            stress.marker_write({"boot_id": stress.boot_id(), "pid": os.getpid(), "domain": "cpu", "test": "co-cycle",
+                                 "unit": "ctune-run-x.service", "invocation_id": "abc"})
+            self.assertIsNotNone(stress.running())
+            self.assertIsNone(stress.check_interrupted())
+            self.assertTrue(os.path.exists(stress.MARKER))
+        finally:
+            stress.unit_state = real
+            os.remove(stress.MARKER)
+
+    def test_marker_is_claimed_once(self):
+        stress.marker_write({"boot_id": "other-boot", "pid": 1, "domain": "mem", "test": "screen"})
+        self.assertIsNotNone(stress._claim())
+        self.assertIsNone(stress._claim())
+
+    def test_stop_all_reaches_every_load(self):
+        loads = [stress.Load(f"s{i}", ["sleep", "60"], _ok) for i in range(3)]
+        for ld in loads:
+            ld.start()
+        stress._stop_all(loads, grace=5)
+        self.assertTrue(all(not ld.alive() for ld in loads))
+
+    def test_burn_with_no_compared_batch_is_not_green(self):
+        from ctune.gpu import burn
+        out = "Results are 268435456 bytes each, thus performing 29 iterations\nTested 1 GPUs:\n\tGPU 0: OK\n"
+        self.assertFalse(burn.parse(0, out, False)["ok"])
+
+    def test_burn_name_collision_is_not_called_a_missing_image(self):
+        from ctune.gpu import burn
+        r = burn.parse(125, "Error: creating container storage: the container name \"ctune-gpu-burn\" is already in "
+                            "use by abc\n", False)
+        self.assertFalse(r["unavailable"])
+        self.assertFalse(any("burn-setup" in e for e in r["errors"]))
+
+    def test_gpu_test_rejects_empty_or_too_short_runs(self):
+        from ctune.gpu import api as gpu
+        with self.assertRaises(ValueError):
+            gpu.test("core", burn_seconds=0, fp64_seconds=0, tc_seconds=0)
+        with self.assertRaises(ValueError):
+            gpu.test("core", fp64_seconds=30)
+        with self.assertRaises(ValueError):
+            gpu.test("screen", burn_seconds=-5)
+
+    def test_mprime_floor(self):
+        from ctune.cpu import api as cpu
+        with self.assertRaises(ValueError):
+            cpu.test([0], seconds_per_core=30, workload="sse-huge")
