@@ -103,6 +103,26 @@ def bios_search(query, name="latest", limit=60, include_hidden=False):
     return hits
 
 
+def verify(name="latest", write=True):
+    """BIOS configuration vs running hardware for a snapshot; also writes verify.md into the snapshot."""
+    from ctune.mem import verify as _v
+    d = resolve(name)
+    md = _v.verify_md(d)
+    if write:
+        open(os.path.join(d, "verify.md"), "w").write(md)
+    return md
+
+
+def checklist(name="latest", write=True):
+    """Re-entry checklist (all non-default settings) for a snapshot; also writes reentry_checklist.md."""
+    from ctune.mem import verify as _v
+    d = resolve(name)
+    md = _v.checklist_md(d)
+    if write:
+        open(os.path.join(d, "reentry_checklist.md"), "w").write(md)
+    return md
+
+
 # ---------------------------------------------------------------- live state
 def sensors():
     return _sensors.read()

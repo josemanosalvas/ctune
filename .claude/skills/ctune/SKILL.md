@@ -19,7 +19,7 @@ You run a **campaign** in one **domain** (mem, gpu or cpu): a chain of single-va
    - gpu: call `gpu_apply`. The user approves a password prompt.
    Done when the change is in place, or the user reports a failed boot.
 4. **Verify.**
-   - mem: `mem_snapshot`, then `mem_compare` against the baseline snapshot.
+   - mem: `mem_snapshot`, then `mem_verify` (BIOS configuration against the running hardware) and `mem_compare` against the baseline snapshot. After a BIOS flash, `mem_checklist` on the last pre-flash snapshot lists what to re-enter.
    - gpu: `gpu_status`; the readback and `applied_by_ctune` show the new values.
    Done when every planned value is confirmed and every other difference is explained. A reverted or mismatched setting makes the step **red**.
 5. **Test.**

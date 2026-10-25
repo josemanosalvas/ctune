@@ -55,6 +55,11 @@ TOOLS = {
     "mem_compare": ("Diff two snapshots: timings, raw registers, clocks, voltages, VTT and VDIMM, the platform "
                     "fingerprint, every BIOS setting by menu path, and AOD/APOB. Defaults to previous against latest.",
                     _obj({"old": S, "new": S}), lambda a: mem.compare(a.get("old", "previous"), a.get("new", "latest"))),
+    "mem_verify": ("Check a snapshot's BIOS configuration against the running hardware (timings, speed, FCLK, voltages, "
+                   "PBO limits). Writes verify.md into the snapshot.", _obj({"name": S}), lambda a: mem.verify(a.get("name", "latest"))),
+    "mem_checklist": ("Re-entry checklist for after a BIOS flash: every visible setting that differs from its default, by "
+                      "menu. Writes reentry_checklist.md into the snapshot.", _obj({"name": S}),
+                      lambda a: mem.checklist(a.get("name", "latest"))),
     "mem_bios_search": ("Search the decoded BIOS settings by menu path or prompt text, for example 'ProcODT', 'VCORE SOC'.",
                         _obj({"query": S, "snapshot": S, "include_hidden": {"type": "boolean"}}, ["query"]),
                         lambda a: mem.bios_search(a["query"], a.get("snapshot", "latest"),

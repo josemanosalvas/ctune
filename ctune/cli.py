@@ -42,6 +42,10 @@ def build():
     s = m.add_parser("compare", help="diff two snapshots (default previous vs latest)")
     s.add_argument("old", nargs="?", default="previous")
     s.add_argument("new", nargs="?", default="latest")
+    s = m.add_parser("verify", help="BIOS configuration vs running hardware (writes verify.md)")
+    s.add_argument("name", nargs="?", default="latest")
+    s = m.add_parser("checklist", help="settings to re-enter after a BIOS flash (writes reentry_checklist.md)")
+    s.add_argument("name", nargs="?", default="latest")
     s = m.add_parser("bios", help="search decoded BIOS settings")
     s.add_argument("query")
     s.add_argument("--snapshot", default="latest")
@@ -94,6 +98,10 @@ def main(argv=None):
             _out(mem.summary(a.name))
         elif a.mcmd == "compare":
             _out(mem.compare(a.old, a.new))
+        elif a.mcmd == "verify":
+            _out(mem.verify(a.name))
+        elif a.mcmd == "checklist":
+            _out(mem.checklist(a.name))
         elif a.mcmd == "bios":
             for h in mem.bios_search(a.query, a.snapshot, include_hidden=a.hidden):
                 print(f"{h['location']}  =  {h['value']}  [{h['state']}]")
