@@ -13,10 +13,9 @@ from memtune import api  # noqa: E402
 
 VERSIONS = ("2025-06-18", "2025-03-26", "2024-11-05")
 INSTRUCTIONS = (
-    "memtune reads the live memory/fabric configuration of an AMD Ryzen system (timings from the memory "
-    "controller, clocks/voltages from the SMU, every BIOS setup option decoded from EFI variables), sensors, "
-    "and corrected machine-check error counters, and keeps a tuning journal. It never changes hardware settings: "
-    "BIOS changes are made by the user. 'snapshot' needs root and shows a polkit password prompt on the desktop."
+    "memtune reads the memory and fabric configuration of an AMD Ryzen system: timings from the memory controller, "
+    "clocks and voltages from the SMU, and every BIOS setup option decoded from the EFI variables. It also reads sensors "
+    "and corrected machine-check error counters, and keeps a tuning journal. It reads only; the user makes every BIOS change."
 )
 
 
@@ -26,29 +25,29 @@ def _obj(props=None, required=None):
 
 S = {"type": "string"}
 TOOLS = {
-    "status": ("Platform, BIOS, drivers, live sensors (VDIMM/VSOC/VTT, fans per header, temps), error total, "
-               "latest snapshots and journal tail.", _obj(), lambda a: api.status()),
-    "snapshot": ("Take a full snapshot (timings per channel, FCLK/UCLK/MCLK, voltages, DIMMs, decoded BIOS settings, "
-                 "platform fingerprint). Root via pkexec: the user must approve a password prompt. Returns the summary.",
+    "status": ("Platform, BIOS, drivers, live sensors (VDIMM, VSOC, VTT, fans per header, temperatures), the error total, "
+               "the latest snapshots and the journal tail.", _obj(), lambda a: api.status()),
+    "snapshot": ("Take a full snapshot: timings per channel, FCLK/UCLK/MCLK, voltages, DIMMs, decoded BIOS settings and the "
+                 "platform fingerprint. It needs root, so the user approves a password prompt. Returns the summary.",
                  _obj({"label": S, "skip_devmem": {"type": "boolean"}}),
                  lambda a: api.snapshot(a.get("label", ""), a.get("skip_devmem", False))),
     "list_snapshots": ("List snapshot directory names (oldest first).", _obj(), lambda a: api.snapshots()),
     "show_snapshot": ("Markdown summary of a snapshot ('latest', 'previous', or a name).",
                       _obj({"name": S}), lambda a: api.summary(a.get("name", "latest"))),
-    "compare": ("Diff two snapshots: timings, raw registers, clocks/voltages, VTT/VDIMM, platform fingerprint, every "
-                "BIOS setting by menu path, AOD/APOB. Defaults: previous vs latest.",
+    "compare": ("Diff two snapshots: timings, raw registers, clocks, voltages, VTT and VDIMM, the platform fingerprint, every "
+                "BIOS setting by menu path, and AOD/APOB. Defaults to previous against latest.",
                 _obj({"old": S, "new": S}), lambda a: api.compare(a.get("old", "previous"), a.get("new", "latest"))),
-    "bios_search": ("Search decoded BIOS settings by menu path/prompt text, e.g. 'ProcODT', 'VCORE SOC', 'SYS_FAN4'.",
+    "bios_search": ("Search the decoded BIOS settings by menu path or prompt text, for example 'ProcODT', 'VCORE SOC' or 'SYS_FAN4'.",
                     _obj({"query": S, "snapshot": S, "include_hidden": {"type": "boolean"}}, ["query"]),
                     lambda a: api.bios_search(a["query"], a.get("snapshot", "latest"),
                                               include_hidden=a.get("include_hidden", False))),
-    "sensors": ("Live hwmon readings with board labels: VDIMM, VSOC, VTT, fan RPM/PWM per header, CPU/GPU temps.",
+    "sensors": ("Live hwmon readings with board labels: VDIMM, VSOC, VTT, fan RPM and PWM per header, CPU and GPU temperatures.",
                 _obj(), lambda a: api.sensors()),
     "errors": ("Corrected machine-check errors per MCA bank since boot, grouped by subsystem (fabric, pcie/io, memory "
-               "controller, core), plus kernel 'Hardware Error' lines. The Linux equivalent of WHEA 17/18/19.",
+               "controller, core), plus kernel 'Hardware Error' lines. This is the Linux counterpart of WHEA 17/18/19.",
                _obj({"since": S}), lambda a: api.errors(a.get("since", "-24h"))),
-    "journal_add": ("Append to the tuning journal. kind: plan (intended BIOS change), applied, result (test outcome), "
-                    "note. Put structured details in data.",
+    "journal_add": ("Append to the tuning journal. kind is plan (an intended BIOS change), applied, result (a test outcome) "
+                    "or note. Put structured details in data.",
                     _obj({"kind": {"type": "string", "enum": ["plan", "applied", "result", "note"]}, "text": S,
                           "data": {"type": "object"}}, ["kind", "text"]),
                     lambda a: api.journal_add(a["kind"], text=a["text"], **(a.get("data") or {}))),

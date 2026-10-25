@@ -1,31 +1,33 @@
-# Zen 3 / DDR4 tuning rules
+# Zen 3 and DDR4 tuning rules
 
-Sources: integralfx DDR4 OC guide, Taraquin's OCN Zen 3 guide (anta777 formulas), ZenStates-Core register map, PCGH 5800X3D scaling. Full research with citations: `docs/research/` and `docs/REVIEW-2026-10-24.md`.
+Sources are the integralfx DDR4 OC guide, Taraquin's OCN Zen 3 guide (with anta777's formulas), the ZenStates-Core register map and PCGH's 5800X3D scaling test. The research with citations is in `docs/research/` and `docs/REVIEW-2026-10-24.md`.
 
-## Timing relationships
-- tRC = tRAS + tRP. tRAS ≥ tRCD + tRTP.
-- tFAW ≥ 4 × tRRDS. Lowering tFAW below that gains nothing.
-- tWR = 2 × tRTP (the DRAM's MR0 encodes them as a pair). Keep both even.
-- tWTRL ≈ tWR/2, tWTRS 3–4.
-- **GDM (gear-down)**: commands latch on every other clock. tCL/tCWL/tWR/tRTP are forced even, and odd tRCD/tRP/tRC effectively run one clock longer. Tune in even steps.
-- **2 DIMMs per channel, single rank**: two ranks per channel, so tWRRD ≥ 3. tRDRDDD/tWRWRDD (different DIMM) matter; SD (same DIMM) is unused. With 2T preamble the DD floor is 5.
-- tRDRDSCL/tWRWRSCL: 5 is acceptable, 4/4 then 3/3 on B-die; if only one fails it is usually RDRDSCL.
-- tRFC (B-die): 135–160 ns typical. It is the most heat-sensitive timing; warm-only errors → raise by 16.
-- tREFI is not adjustable on AM4. PowerDown off makes tCKE irrelevant.
+## Timings
+- tRC = tRAS + tRP, and tRAS ≥ tRCD + tRTP.
+- tFAW ≥ 4 × tRRDS. A lower tFAW gains nothing.
+- tWR = 2 × tRTP, because the DRAM's MR0 register encodes them as a pair. Keep both even.
+- tWTRL is about tWR / 2, and tWTRS is 3 or 4.
+- **Gear-down mode (GDM)** latches commands on every other clock. The BIOS forces tCL, tCWL, tWR and tRTP to even values, and odd tRCD, tRP and tRC run one clock longer. Tune in even steps.
+- **Two single-rank DIMMs per channel** give two ranks per channel. tWRRD needs 3 or more. The different-DIMM turnarounds (tRDRDDD, tWRWRDD) matter, and the same-DIMM ones (SD) are unused. With the 2T preamble the DD floor is 5.
+- tRDRDSCL and tWRWRSCL: 5 is acceptable. B-die usually reaches 4/4, then 3/3. When only one fails, it is usually tRDRDSCL.
+- tRFC on B-die is typically 135 to 160 ns. It is the most heat-sensitive timing. If errors appear only when warm, raise it by 16.
+- AM4 has no tREFI setting. With PowerDown disabled, tCKE has no effect.
 
 ## Voltages and fabric
-- FCLK = UCLK = MCLK (1:1). Above the CPU's fabric ceiling you get corrected errors in fabric/pcie banks, or random reboots at idle.
-- VDDG ≤ VSOC − 40 mV (cLDO dropout). VDDP ≤ VDIMM − 0.1 V, ≤ 1.05 V; VDDP can have "holes" where single values fail.
-- SoC above ~1.15 V can scale negatively. 4 DIMMs need more SoC than 2 (≥ 1.12 V reported on this board+kit).
-- PCIe link errors at high FCLK are sometimes fixed by forcing PCIe Gen3 on the chipset or GPU link.
-- ProcODT 28–48 Ω for 4 × 8 GB. RTT for 2DPC: RttNom matters (non-target DIMM terminates); 6/3/3 (RZQ) is a common start but not universal.
+- The target is FCLK = UCLK = MCLK. Above the CPU's fabric ceiling you get corrected errors in the fabric or PCIe banks, or random reboots at idle.
+- VDDG must sit at least 40 mV under the real VSOC (the cLDO dropout). VDDP must sit at least 0.1 V under VDIMM and at most 1.05 V. Some single VDDP values fail while their neighbours work.
+- SoC voltage above about 1.15 V can reduce stability. Four DIMMs need more SoC voltage than two. A user with this board and kit reported needing at least 1.12 V.
+- At high FCLK, PCIe link errors sometimes disappear when the chipset or GPU link is forced to PCIe Gen3.
+- ProcODT for 4 × 8 GB is usually 28 to 48 Ω. With two DIMMs per channel, RttNom matters because the idle DIMM terminates the bus. RTT 6/3/3 (in RZQ divisors) is a common starting point and fails on some kits.
 
-## Error signatures (from `errors`)
-- fabric (coherent_station, pie, param_block) → FCLK/VDDG/VSOC.
-- pcie/io (nbio) → PCIe link at that FCLK; try Gen3.
-- memory controller (umc) → memory timings/voltage/termination.
-- core banks (load_store, l2, decode, execution, floating_point) → Curve Optimizer, not memory.
-- Bit errors on non-ECC DIMMs never raise an MCE: they show only as test failures, crashes, or btrfs checksum errors.
+## Error signatures
+The `errors` tool groups machine-check banks by subsystem. Each group points at a different fix:
+- Fabric banks (coherent_station, pie, param_block): FCLK, VDDG or VSOC.
+- PCIe/IO bank (nbio): the PCIe link at this FCLK. Try Gen3.
+- Memory controller banks (umc): memory timings, voltage or termination.
+- Core banks (load_store, l2_cache, decode_unit, execution_unit, floating_point): Curve Optimizer.
 
-## What it is worth on a 5800X3D
-The 96 MB L3 hides most memory latency: perfect tertiaries ≈ +0.5–1.5 % average FPS when CPU-bound, more on 1 % lows, ~0 % GPU-bound. Say so when the user weighs effort.
+Bit errors on non-ECC DIMMs raise no machine check. They show up as test failures, crashes or btrfs checksum errors.
+
+## Payoff on a 5800X3D
+The 96 MB L3 cache hides most memory latency. Perfect tertiaries are worth about 0.5 to 1.5 % average FPS when CPU-bound, more on 1 % lows, and about 0 % when GPU-bound. Tell the user this when they weigh effort against gain.
