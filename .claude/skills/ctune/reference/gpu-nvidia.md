@@ -22,7 +22,7 @@ Search, in this order:
 ## Reading results
 - `limiter_share.power cap` near 1 means the power limit sets the clock. An undervolt lowers it.
 - Xid errors: 13 (graphics exception), 31 (memory fault), 43 (GPU stopped), 45, 61/62 (microcontroller) mark a red step. 79 (fell off the bus) needs a reboot.
-- vkpeak FP32 is power-heavy and short. Games, ray tracing especially, are the strictest test: the sign-off is a few hours of the user's own games.
+- vkpeak FP32 is power-heavy and short. Games, ray tracing especially, are the strictest test, so after `signoff` the user plays their own games for a few hours.
 
 ## Power limit
 Keep the default unless the user wants an efficiency target. Lowering it (for example to 320 W) after a good undervolt trades a few percent of performance for noise and heat.

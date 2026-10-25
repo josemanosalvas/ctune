@@ -9,11 +9,12 @@ import sys
 import traceback
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.realpath(__file__))))
-from ctune.core import errors as core_errors, journal, sensors  # noqa: E402
+from ctune.core import errors as core_errors, journal, runner, sensors, signoff  # noqa: E402
 from ctune.core.paths import DATA  # noqa: E402
 from ctune.cpu import api as cpu  # noqa: E402
 from ctune.gpu import api as gpu  # noqa: E402
 from ctune.mem import api as mem  # noqa: E402
+from ctune.mem import test as memtest  # noqa: E402
 
 VERSIONS = ("2025-06-18", "2025-03-26", "2024-11-05")
 INSTRUCTIONS = (
@@ -22,8 +23,14 @@ INSTRUCTIONS = (
     "the EFI variables); the user makes every BIOS change. cpu_* tools read and set the per-core Curve Optimizer margin "
     "through the SMU at runtime and test cores one at a time. gpu_* tools read the GPU and apply clock offsets, a "
     "max-clock lock and a power limit at runtime. cpu and gpu settings stay within guardrails and a reboot clears them. "
-    "errors, sensors and journal_* are shared."
+    "mem_test, cpu_test and gpu_test are the per-step stability tests and signoff is the multi-hour suite; long tests run "
+    "detached, so poll test_status. errors, sensors and journal_* are shared."
 )
+
+
+def _run(kind, fn, detach, **kw):
+    """Long tests run detached (poll test_status); short ones can run inline."""
+    return runner.start(kind, **kw) if detach else fn(**kw)
 
 
 def _obj(props=None, required=None):
@@ -63,6 +70,15 @@ TOOLS = {
     "mem_checklist": ("Re-entry checklist for after a BIOS flash: every visible setting that differs from its default, by "
                       "menu. Writes reentry_checklist.md into the snapshot.", _obj({"name": S}),
                       lambda a: mem.checklist(a.get("name", "latest"))),
+    "mem_test": ("RAM stability test, recorded in the journal. screen (25 min): stressapptest -W over the free RAM "
+                 "while memtest_vulkan heats the case. fabric (90 min + 20 min idle): the screen plus NVMe reads, then "
+                 "an idle soak, for FCLK steps and after a BIOS flash. Runs detached by default; poll test_status. Red "
+                 "on stressapptest errors, new corrected machine-check errors (umc = memory, fabric = FCLK/VDDG/VSOC), "
+                 "VRAM or Xid errors, or a crash.",
+                 _obj({"kind": {"type": "string", "enum": ["screen", "fabric"]}, "minutes": {"type": "number"},
+                       "gpu_heat": {"type": "boolean"}, "detach": {"type": "boolean"}, "note": S}),
+                 lambda a: _run("mem_test", memtest.test, a.get("detach", True), kind=a.get("kind", "screen"),
+                                minutes=a.get("minutes"), gpu_heat=a.get("gpu_heat", True), note=a.get("note", ""))),
     "mem_bios_search": ("Search the decoded BIOS settings by menu path or prompt text, for example 'ProcODT', 'VCORE SOC'.",
                         _obj({"query": S, "snapshot": S, "include_hidden": {"type": "boolean"}}, ["query"]),
                         lambda a: mem.bios_search(a["query"], a.get("snapshot", "latest"),
@@ -83,9 +99,10 @@ TOOLS = {
                  "score and load, about 2 min per run), vram (memtest_vulkan), screen (both). Returns verdict green/red, "
                  "score, average clock, power, efficiency and any new Xid errors.",
                  _obj({"kind": {"type": "string", "enum": ["core", "vram", "screen"]}, "vram_seconds": {"type": "integer"},
-                       "core_runs": {"type": "integer"}, "note": S}),
-                 lambda a: gpu.test(a.get("kind", "screen"), a.get("vram_seconds", 300), a.get("core_runs", 3),
-                                    note=a.get("note", ""))),
+                       "core_runs": {"type": "integer"}, "detach": {"type": "boolean"}, "note": S}),
+                 lambda a: _run("gpu_test", gpu.test, a.get("detach", False), kind=a.get("kind", "screen"),
+                                vram_seconds=a.get("vram_seconds", 300), core_runs=a.get("core_runs", 3),
+                                note=a.get("note", ""))),
     "gpu_xid": ("NVIDIA Xid errors from the kernel log ('boot' or a journalctl --since value).",
                 _obj({"since": S}), lambda a: gpu.xid_errors(a.get("since", "boot"))),
     # cpu
@@ -110,9 +127,22 @@ TOOLS = {
                  "phases and 1 Hz per-core telemetry. Takes about seconds_per_core (default 360) per core. Returns "
                  "verdict green/red, red cores, per-phase clocks and voltages, and new corrected machine-check errors.",
                  _obj({"cores": {"type": "array", "items": {"type": "integer"}}, "seconds_per_core": {"type": "integer"},
-                       "order": {"type": "string", "enum": ["sequential", "random"]}, "note": S}),
-                 lambda a: cpu.test(a.get("cores"), a.get("seconds_per_core", 360), a.get("order", "sequential"),
-                                    note=a.get("note", ""))),
+                       "order": {"type": "string", "enum": ["sequential", "random"]}, "detach": {"type": "boolean"},
+                       "note": S}),
+                 lambda a: _run("cpu_test", cpu.test, a.get("detach", False), cores=a.get("cores"),
+                                seconds_per_core=a.get("seconds_per_core", 360), order=a.get("order", "sequential"),
+                                note=a.get("note", ""))),
+    # suite
+    "signoff": ("Multi-hour sign-off that ends a campaign, against every domain's current settings: ram (60 min), "
+                "ycruncher (45), cpu per-core cycle (about 50), gpu (20), combined RAM + GPU + NVMe load (30), idle "
+                "(30). Stops at the first red phase unless keep_going. Always runs detached: poll test_status; the "
+                "result lands in the journal. minutes overrides per phase, e.g. {\"ram\": 120}.",
+                _obj({"phases": {"type": "array", "items": {"type": "string", "enum": list(signoff.PHASES)}},
+                      "minutes": {"type": "object"}, "keep_going": {"type": "boolean"}, "note": S}),
+                lambda a: runner.start("signoff", phases=a.get("phases"), minutes=a.get("minutes"),
+                                       keep_going=a.get("keep_going", False), note=a.get("note", ""))),
+    "test_status": ("The test running now (domain, phase, elapsed minutes, log tail), or the last test result. Also "
+                    "records a test that a crash or reboot cut short.", _obj(), lambda a: runner.status()),
 }
 
 

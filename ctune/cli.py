@@ -4,13 +4,13 @@ import json
 import sys
 
 from ctune.core import errors as core_errors
-from ctune.core import journal
-from ctune.core import sensors
+from ctune.core import journal, runner, sensors, signoff
 from ctune import mascot
 from ctune.core.paths import DATA
 from ctune.cpu import api as cpu
 from ctune.gpu import api as gpu
 from ctune.mem import api as mem
+from ctune.mem import test as memtest
 
 
 def _out(x):
@@ -62,6 +62,13 @@ def build():
     s.add_argument("name", nargs="?", default="latest")
     s = m.add_parser("checklist", help="settings to re-enter after a BIOS flash (writes reentry_checklist.md)")
     s.add_argument("name", nargs="?", default="latest")
+    s = m.add_parser("test", help="RAM stability: stressapptest over the free RAM with a GPU heat load")
+    s.add_argument("kind", nargs="?", default="screen", choices=["screen", "fabric"])
+    s.add_argument("--minutes", type=float, help="default 25 (screen) or 90 + 20 idle (fabric)")
+    s.add_argument("--no-gpu-heat", action="store_true")
+    s.add_argument("--mb", type=int, help="cap the RAM the test takes (default: free RAM minus 1.5 GB)")
+    s.add_argument("--detach", action="store_true", help="run in the background; follow with `ctune test-status`")
+    s.add_argument("--note", default="")
     s = m.add_parser("bios", help="search decoded BIOS settings")
     s.add_argument("query")
     s.add_argument("--snapshot", default="latest")
@@ -79,6 +86,7 @@ def build():
     s.add_argument("kind", nargs="?", default="screen", choices=["core", "vram", "screen"])
     s.add_argument("--vram-seconds", type=int, default=300)
     s.add_argument("--core-runs", type=int, default=3)
+    s.add_argument("--detach", action="store_true")
     s.add_argument("--note", default="")
     s = g.add_parser("xid", help="NVIDIA Xid errors from the kernel log")
     s.add_argument("--since", default="boot")
@@ -95,7 +103,19 @@ def build():
     s.add_argument("--cores", help="comma-separated core numbers (default all)")
     s.add_argument("--seconds-per-core", type=int, default=360)
     s.add_argument("--order", default="sequential", choices=["sequential", "random"])
+    s.add_argument("--detach", action="store_true")
     s.add_argument("--note", default="")
+
+    s = sub.add_parser("signoff", help="multi-hour suite: ram, ycruncher, cpu, gpu, combined, idle (about 4 h)")
+    s.add_argument("--phases", help=f"comma-separated subset of {','.join(signoff.PHASES)}")
+    s.add_argument("--minutes", help="per-phase overrides, e.g. ram=120,idle=60")
+    s.add_argument("--keep-going", action="store_true", help="run every phase even after a red one")
+    s.add_argument("--mb", type=int, help="cap the RAM the memory phases take")
+    s.add_argument("--detach", action="store_true")
+    s.add_argument("--note", default="")
+    sub.add_parser("test-status", help="the running test and its phase, or the last test result")
+    s = sub.add_parser("_run", help=argparse.SUPPRESS)
+    s.add_argument("spec")
     return ap
 
 
@@ -103,6 +123,7 @@ def main(argv=None):
     a = build().parse_args(argv)
     if a.cmd == "status":
         st = mem.status()
+        st["test"] = runner.status()
         for name, fn in (("cpu", cpu.status), ("gpu", gpu.status)):
             try:
                 st[name] = fn()
@@ -135,6 +156,9 @@ def main(argv=None):
             _out(mem.verify(a.name))
         elif a.mcmd == "checklist":
             _out(mem.checklist(a.name))
+        elif a.mcmd == "test":
+            kw = {"kind": a.kind, "minutes": a.minutes, "gpu_heat": not a.no_gpu_heat, "note": a.note, "mb": a.mb}
+            _out(runner.start("mem_test", **kw) if a.detach else memtest.test(**kw))
         elif a.mcmd == "bios":
             for h in mem.bios_search(a.query, a.snapshot, include_hidden=a.hidden):
                 print(f"{h['location']}  =  {h['value']}  [{h['state']}]")
@@ -146,7 +170,8 @@ def main(argv=None):
         elif a.gcmd == "reset":
             _out(gpu.reset())
         elif a.gcmd == "test":
-            _out(gpu.test(a.kind, a.vram_seconds, a.core_runs, note=a.note))
+            kw = {"kind": a.kind, "vram_seconds": a.vram_seconds, "core_runs": a.core_runs, "note": a.note}
+            _out(runner.start("gpu_test", **kw) if a.detach else gpu.test(**kw))
         elif a.gcmd == "xid":
             _out(gpu.xid_errors(a.since))
     elif a.cmd == "cpu":
@@ -160,7 +185,17 @@ def main(argv=None):
             _out(cpu.reset())
         elif a.ccmd == "test":
             cores = [int(x) for x in a.cores.split(",")] if a.cores else None
-            _out(cpu.test(cores, a.seconds_per_core, a.order, note=a.note))
+            kw = {"cores": cores, "seconds_per_core": a.seconds_per_core, "order": a.order, "note": a.note}
+            _out(runner.start("cpu_test", **kw) if a.detach else cpu.test(**kw))
+    elif a.cmd == "signoff":
+        kw = {"phases": a.phases.split(",") if a.phases else None, "keep_going": a.keep_going, "note": a.note,
+              "mb": a.mb,
+              "minutes": {k: float(v) for k, v in (x.split("=") for x in a.minutes.split(","))} if a.minutes else None}
+        _out(runner.start("signoff", **kw) if a.detach else signoff.run(**kw))
+    elif a.cmd == "test-status":
+        _out(runner.status())
+    elif a.cmd == "_run":
+        _out(runner.dispatch(a.spec))
     return 0
 
 

@@ -1,7 +1,7 @@
 """CPU (Curve Optimizer) API: status, probe/apply/reset (root helper via pkexec), per-core stability test with telemetry.
 
 Runtime margins last until reboot, so a crash or reboot puts the BIOS values back. A test that the machine did not
-survive leaves a marker file; the next cpu call in a new boot records it as a red result.
+survive leaves the shared crash marker (ctune.core.stress); the next ctune call in a new boot records it as red.
 """
 import json
 import os
@@ -14,12 +14,11 @@ import tempfile
 import threading
 import time
 
-from ctune.core import errors, journal
+from ctune.core import errors, journal, stress
 from ctune.core.paths import DATA
 from ctune.cpu import smu
 
 STATE = os.path.join(DATA, "cpu_state.json")
-MARKER = os.path.join(DATA, "cpu_test_running.json")
 HELPER = os.path.join(os.path.dirname(os.path.abspath(__file__)), "apply.py")
 
 # One stress-ng stressor at a time, one thread, pinned to the first logical CPU of the core under test. Every
@@ -163,7 +162,6 @@ def status():
         rows, package = [{"core": c, "co": cur["cores"][c], "co_source": cur["source"][c]}
                          for c in range(len(cur["cores"]))], {"error": str(e)}
     core_mce = {cpu: {b: n for b, n in banks.items() if n} for cpu, banks in errors.counts_by_cpu().items()}
-    marker = _marker_read()
     return {
         "platform": {**info, "cores": {c: ",".join(map(str, cpus)) for c, cpus in info.get("cores", {}).items()}},
         "platform_problems": problems,
@@ -171,7 +169,7 @@ def status():
         "applied_by_ctune": {k: st.get(k) for k in ("probe", "boot_values", "applied", "smu_fw", "ts") if k in st},
         "cores": rows, "package": package, "cpufreq": _cpufreq(),
         "core_mce_since_boot": {cpu: b for cpu, b in core_mce.items() if b},
-        "test_running": marker if marker and marker.get("boot_id") == _boot_id() else None,
+        "test_running": stress.running(),
         "interrupted_test_recorded": interrupted,
     }
 
@@ -256,42 +254,8 @@ def reset():
     return out
 
 
-# ---------------------------------------------------------------- crash marker
-def _marker_write(d):
-    os.makedirs(DATA, exist_ok=True)
-    tmp = MARKER + ".tmp"
-    with open(tmp, "w") as f:
-        json.dump({**d, "updated": _now()}, f)
-        f.flush()
-        os.fsync(f.fileno())
-    os.replace(tmp, MARKER)
-
-
-def _marker_read():
-    try:
-        return _json(MARKER)
-    except (OSError, ValueError):
-        return None
-
-
-def check_interrupted(boot_id=None):
-    """If a cpu test was running in an earlier boot, record it as red (crash or reboot during the test)."""
-    m = _marker_read()
-    if not m or m.get("boot_id") == (boot_id or _boot_id()):
-        return None
-    try:
-        r = subprocess.run(["journalctl", "-k", "-b", "0", "--no-pager", "-o", "short-iso", "-g", "Hardware Error"],
-                           capture_output=True, text=True, timeout=30)
-        boot_mce = [l for l in r.stdout.splitlines() if l and not l.startswith("-- ")][:20]
-    except (OSError, subprocess.SubprocessError):
-        boot_mce = []
-    rec = journal.add(DATA, "result", domain="cpu", text="cpu test interrupted by a crash or reboot", verdict="red",
-                      core=m.get("core"), phase=m.get("phase"), settings=m.get("settings"), started=m.get("started"),
-                      last_update=m.get("updated"), crashed_boot_id=m.get("boot_id"),
-                      hardware_errors_this_boot=boot_mce,
-                      next_step="read `journalctl -k -b -1`; the BIOS margins are active again")
-    os.remove(MARKER)
-    return rec
+def check_interrupted():
+    return stress.check_interrupted()
 
 
 # ---------------------------------------------------------------- test
@@ -358,7 +322,7 @@ class _Sampler(threading.Thread):
         return out
 
 
-def test(cores=None, seconds_per_core=360, order="sequential", note=""):
+def test(cores=None, seconds_per_core=360, order="sequential", note="", record=True):
     """Cycle a single verified stress-ng thread through the given cores (default all), each core through PHASES with
     idle gaps. Red = a stress-ng error, any new corrected machine-check error, or a crash (recorded on the next boot)."""
     check_interrupted()
@@ -379,8 +343,7 @@ def test(cores=None, seconds_per_core=360, order="sequential", note=""):
     settings = {"margins": cur["cores"], "source": cur["source"]}
     res = {"test": "co-cycle", "cores": cores, "seconds_per_core": seconds_per_core, "phase_s": phase_s,
            "phases": [p for p, _ in PHASES], "settings": settings, "cpufreq": _cpufreq()}
-    t0, boot = time.time(), _boot_id()
-    started = _now()
+    t0 = time.time()
     mce_all_before = errors.counts()
     own_mask = os.sched_getaffinity(0)
     sampler = _Sampler(all_cpus)
@@ -388,34 +351,32 @@ def test(cores=None, seconds_per_core=360, order="sequential", note=""):
     per_core = []
     tmp = tempfile.mkdtemp(prefix="ctune-cpu-test-")
     try:
-        for i, core in enumerate(cores):
-            cpu, avoid = topo[core][0], topo[core]
-            os.sched_setaffinity(0, (all_cpus - set(avoid)) or all_cpus)
-            before = errors.counts_by_cpu()
-            phases = {}
-            for name, args in PHASES:
-                _marker_write({"boot_id": boot, "started": started, "core": core, "phase": name, "settings": settings})
-                sampler.mark(core, name, avoid)
-                phases[name] = r = _run_stress(cpu, args, phase_s, tmp)
-                sampler.mark(core, "idle", avoid)
-                time.sleep(IDLE_GAP_S)
-                if not r["ok"]:
-                    break   # skip the rest of this core, like CoreCycler's skipCoreOnError
-            delta = errors.delta_by_cpu(before, errors.counts_by_cpu())
-            ok = all(p["ok"] for p in phases.values()) and not delta
-            per_core.append({"core": core, "cpu": cpu, "margin": cur["cores"][core], "verdict": "green" if ok else "red",
-                             "phases": phases, "mce_delta_by_cpu": delta, "telemetry": sampler.summary(core)})
-            if i < len(cores) - 1:
-                sampler.mark(None, None, ())
-                time.sleep(BETWEEN_CORES_S)
+        with stress.run("cpu", "co-cycle", settings) as run:
+            for i, core in enumerate(cores):
+                cpu, avoid = topo[core][0], topo[core]
+                os.sched_setaffinity(0, (all_cpus - set(avoid)) or all_cpus)
+                before = errors.counts_by_cpu()
+                phases = {}
+                for name, args in PHASES:
+                    run.update(phase=name, core=core)
+                    sampler.mark(core, name, avoid)
+                    phases[name] = r = _run_stress(cpu, args, phase_s, tmp)
+                    sampler.mark(core, "idle", avoid)
+                    time.sleep(IDLE_GAP_S)
+                    if not r["ok"]:
+                        break   # skip the rest of this core, like CoreCycler's skipCoreOnError
+                delta = errors.delta_by_cpu(before, errors.counts_by_cpu())
+                ok = all(p["ok"] for p in phases.values()) and not delta
+                per_core.append({"core": core, "cpu": cpu, "margin": cur["cores"][core],
+                                 "verdict": "green" if ok else "red", "phases": phases, "mce_delta_by_cpu": delta,
+                                 "telemetry": sampler.summary(core)})
+                if i < len(cores) - 1:
+                    sampler.mark(None, None, ())
+                    time.sleep(BETWEEN_CORES_S)
     finally:
         sampler.stop.set()
         sampler.join()
         os.sched_setaffinity(0, own_mask)
-        try:
-            os.remove(MARKER)
-        except OSError:
-            pass
         try:
             os.rmdir(tmp)
         except OSError:
@@ -431,5 +392,6 @@ def test(cores=None, seconds_per_core=360, order="sequential", note=""):
     res["verdict"] = "green" if not red and not new_mce and not res["kernel_hw_errors"] else "red"
     res["note"] = ("corrected errors are also polled every check_interval; call `errors` again 300 s after the test "
                    "before trusting a zero")
-    journal.add(DATA, "result", domain="cpu", text=note or f"cpu test cores {cores}", **res)
+    if record:
+        journal.add(DATA, "result", domain="cpu", text=note or f"cpu test cores {cores}", **res)
     return res

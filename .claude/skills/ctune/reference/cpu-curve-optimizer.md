@@ -11,8 +11,9 @@ Curve Optimizer (CO) shifts each core's voltage/frequency curve by a **margin**.
 1. **Screen the cores at -30 first**, each on its own at its current margin. All-core stress tests pass on margins that fail single-core. A red core goes to -25, then -27 or -28 to refine. Done when each of them is green at its final margin.
 2. **Lower the cores with headroom** by 5 counts per step, the most `cpu_apply` allows, and screen after each. Done when each has a first red value.
 3. **Refine** between the last green and the first red value in steps of 1 or 2. Done when every core has a green final margin at least 2 counts less negative than its first red value.
-4. **Sign-off.** Run all cores in random order with `seconds_per_core` 600 or more. Then the user plays their own games and leaves the machine idle for a few hours, overnight if possible. Done when every core is green and the user reports no crash.
+4. **Sign-off.** Run `signoff` with `minutes` {"cpu": 80}, so each core gets 10 minutes in random order. Done when it is green.
 5. **Persist.** Runtime margins last until reboot. The user enters the final values in the BIOS, a sign and a magnitude per core, under the menu path that `mem_bios_search` "Curve Optimizer" returns. Then take `mem_snapshot` and run `cpu_probe`. Done when the probe matches the new values.
+6. **Real use.** The user plays their own games and leaves the machine idle overnight for a few days. A crash moves the suspect core 2 counts toward 0 in the BIOS. Done when the user reports no crash.
 
 ## Testing
 CO errors show up in single-thread boost and in load-to-idle transitions. All-core loads run lower clocks with more voltage headroom, so they miss most of them, which is why `cpu_test` runs one core at a time. One core takes about 6 minutes and all eight about 50, so tell the user before a long run.

@@ -26,11 +26,11 @@ You run a **campaign** in one **domain** (mem, gpu or cpu): a chain of single-va
    - gpu: `gpu_status`; the readback and `applied_by_ctune` show the new values.
    Done when every planned value is confirmed and every other difference is explained. A reverted or mismatched setting makes the step **red**.
 5. **Test.**
-   - mem: a warm **screen** from the test protocol, then `errors` after one poll interval (300 s).
+   - mem: `mem_test` (screen, or fabric for FCLK steps and after a BIOS flash), then `errors` after 300 s.
    - cpu: `cpu_test` with `cores` set to the changed core, then `errors` after 300 s.
    - gpu: `gpu_test` (screen).
    **Green** means no crash, zero corrected machine-check errors, no new Xid or stress-ng errors, and a score at least as good as the baseline's. The cpu score is `eff_ghz_avg` per phase. **Red** means anything else, and you record the error source.
-6. **Decide.** Write a `result` entry. Green becomes the new baseline. Red rolls back to the baseline value (`cpu_apply`, `gpu_apply` or the BIOS) and records the limit. A campaign ends with a multi-hour **sign-off** of its final configuration under the user's real workload.
+6. **Decide.** Write a `result` entry. Green becomes the new baseline. Red rolls back to the baseline value (`cpu_apply`, `gpu_apply` or the BIOS) and records the limit. A campaign ends with a **sign-off** of its final configuration: `signoff` (about 4 h, detached, poll `test_status`), then a few days of the user's real workload.
 
 ## Guardrails
 

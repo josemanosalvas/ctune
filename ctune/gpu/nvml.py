@@ -67,6 +67,13 @@ def _range(fn, h):
     return lo.value, hi.value
 
 
+def memory_mb(h):
+    """(total, free, used) VRAM in MiB."""
+    m = (ctypes.c_ulonglong * 3)()   # nvmlMemory_t: total, free, used (bytes)
+    _call("nvmlDeviceGetMemoryInfo", h, ctypes.byref(m))
+    return tuple(int(x) >> 20 for x in m)
+
+
 def clock(h, kind=GRAPHICS):
     return _uint("nvmlDeviceGetClockInfo", h, ctypes.c_int(kind))
 

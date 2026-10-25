@@ -18,6 +18,7 @@ Facts that `status` and the snapshots cannot show. Read live values from the too
   - Stock baseline on 2026-10-25 (`gpu_test` screen, 1 core run): FP32 26,666 GFLOPS, 1,639 MHz average under load, 307 W average, VRAM 768 GB/s with no errors, 78 °C max.
   - The power limit caps the clock about two thirds of the time under load, so an undervolt has real headroom.
   - The GPU controls its own fans; CoolerControl uses GPU temperatures as inputs for the case-fan curves.
+- **Memory pressure.** zram swap holds about 10 GB of desktop memory during normal use, so a RAM test with apps open covers only about half the RAM. An ollama `llama-server` can hold about 6 GB of VRAM, which blocks the VRAM test.
 - **Drivers.** The out-of-tree it87 driver in `/var/lib/it87-local` is rebuilt for each kernel by `/usr/local/sbin/load-it87-dkms`.
 - **Open questions.**
   - The trained RTT and CAD values and the SPD/XMP data need one boot with the kernel argument `iomem=relaxed`, followed by a snapshot.

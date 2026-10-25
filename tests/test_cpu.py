@@ -17,7 +17,7 @@ sys.path.insert(0, REPO)
 _DATA = tempfile.mkdtemp(prefix="ctune-test-data-")
 os.environ["CTUNE_DATA"] = _DATA
 
-from ctune.core import errors  # noqa: E402
+from ctune.core import errors, stress  # noqa: E402
 from ctune.cpu import api, smu  # noqa: E402
 
 
@@ -349,21 +349,45 @@ class StressParse(unittest.TestCase):
 
 class CrashMarker(unittest.TestCase):
     def test_interrupted_test_becomes_red(self):
-        api._marker_write({"boot_id": "old-boot", "core": 3, "phase": "fft", "settings": {"applied": {"3": -25}}})
-        rec = api.check_interrupted(boot_id="new-boot")
+        stress.marker_write({"boot_id": "old-boot", "pid": 1, "domain": "cpu", "test": "co-cycle", "core": 3,
+                             "phase": "fft", "settings": {"applied": {"3": -25}}})
+        rec = stress.check_interrupted(boot="new-boot")
         self.assertEqual(rec["verdict"], "red")
         self.assertEqual(rec["core"], 3)
-        self.assertFalse(os.path.exists(api.MARKER))
+        self.assertFalse(os.path.exists(stress.MARKER))
         with open(os.path.join(_DATA, "journal.jsonl")) as f:
             last = [json.loads(l) for l in f][-1]
-        self.assertEqual(last["kind"], "result")
-        self.assertEqual(last["domain"], "cpu")
+        self.assertEqual((last["kind"], last["domain"]), ("result", "cpu"))
 
-    def test_same_boot_is_left_alone(self):
-        api._marker_write({"boot_id": "this-boot", "core": 1, "phase": "idle"})
-        self.assertIsNone(api.check_interrupted(boot_id="this-boot"))
-        self.assertTrue(os.path.exists(api.MARKER))
-        os.remove(api.MARKER)
+    def test_same_boot_running_is_left_alone(self):
+        stress.marker_write({"boot_id": "this-boot", "pid": os.getpid(), "domain": "cpu", "test": "co-cycle"})
+        self.assertIsNone(stress.check_interrupted(boot="this-boot"))
+        self.assertTrue(os.path.exists(stress.MARKER))
+        os.remove(stress.MARKER)
+
+    def test_same_boot_dead_process_is_a_note(self):
+        stress.marker_write({"boot_id": "this-boot", "pid": 2 ** 22 + 12345, "domain": "mem", "test": "screen"})
+        rec = stress.check_interrupted(boot="this-boot")
+        self.assertEqual(rec["kind"], "note")
+        self.assertNotIn("verdict", rec)
+
+    def test_nested_run_reports_into_outer_marker(self):
+        with stress.run("signoff", "signoff") as outer:
+            outer.update(phase="cpu")
+            with stress.run("cpu", "co-cycle") as inner:
+                inner.update(phase="fft", core=2)
+                m = stress.marker_read()
+                self.assertEqual((m["domain"], m["phase"], m["sub"], m["core"]), ("signoff", "cpu", "co-cycle:fft", 2))
+                inner.update(phase="int64", core=3)
+                self.assertEqual(stress.marker_read()["sub"], "co-cycle:int64")
+            self.assertTrue(os.path.exists(stress.MARKER))   # the inner run leaves the outer marker in place
+            outer.update(phase="gpu")
+            self.assertNotIn("sub", stress.marker_read())
+            with stress.run("gpu", "gpu-screen") as g:
+                with stress.run("x", "deep") as d:
+                    d.update(phase="p1")
+                    self.assertEqual(stress.marker_read()["sub"], "gpu-screen:start > deep:p1")
+        self.assertFalse(os.path.exists(stress.MARKER))
 
 
 class DryRun(unittest.TestCase):

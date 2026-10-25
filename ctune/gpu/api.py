@@ -7,7 +7,7 @@ import sys
 import threading
 import time
 
-from ctune.core import journal
+from ctune.core import journal, stress
 from ctune.core.paths import DATA, TOOLS
 from ctune.gpu import nvml
 
@@ -48,6 +48,7 @@ def status():
         "power_w": {"draw": nvml.power_w(h), "limit": nvml.power_limit_w(h),
                     "default": nvml.default_power_limit_w(h), "range": nvml.power_constraints_w(h)},
         "temp_c": nvml.temperature(h), "fan_pct": nvml.fan_percent(h),
+        "vram_mb": dict(zip(("total", "free", "used"), nvml.memory_mb(h))),
         "clock_limiters": nvml.event_reasons(h),
         "applied_by_ctune": applied(),
         "xid_errors_this_boot": len(xid_errors()),
@@ -123,15 +124,69 @@ class _Sampler(threading.Thread):
                 "limiter_share": {k: round(v / len(busy), 2) for k, v in limiters.items()}}
 
 
-def _vram(seconds, budget_bytes):
-    r = subprocess.run(["timeout", "-s", "INT", str(seconds), MEMTEST, "1", str(budget_bytes)],
-                       capture_output=True, text=True)
-    lines = r.stdout.splitlines()
+def parse_vram(rc, out, stopped=True):
+    """memtest_vulkan output: passes, VRAM errors, checked bandwidth (the first two passes are warm-up)."""
+    lines = out.splitlines()
     passes = [l for l in lines if "iteration" in l and "Passed" in l]
     errs = [l for l in lines if re.search(r"error|mismatch|fail", l, re.I) and "Passed" not in l]
+    unavailable = not passes and not errs
+    if unavailable:
+        errs.append(f"memtest_vulkan exited {rc} without a pass: it could not allocate its VRAM buffer "
+                    "(another app holding VRAM?)")
     bw = [float(m.group(1)) for l in passes[2:] if (m := re.search(r"checked:.*?([\d.]+)GB/sec", l))]
-    return {"seconds": seconds, "passes_reported": len(passes), "errors": errs[:20],
+    return {"passes_reported": len(passes), "errors": errs[:20], "unavailable": unavailable,
             "checked_gbps_avg": round(sum(bw) / len(bw), 1) if bw else None, "ok": bool(passes) and not errs}
+
+
+VRAM_MIN_MB = 2048   # below this, memtest_vulkan cannot allocate a useful buffer
+
+
+def vram_holders(min_mb=128):
+    """Compute processes holding VRAM (an LLM server, a game), largest first."""
+    try:
+        r = subprocess.run(["nvidia-smi", "--query-compute-apps=pid,process_name,used_memory",
+                            "--format=csv,noheader,nounits"], capture_output=True, text=True, timeout=10)
+    except (OSError, subprocess.SubprocessError):
+        return []
+    out = []
+    for line in r.stdout.splitlines():
+        parts = [p.strip() for p in line.split(",")]
+        if len(parts) >= 3 and parts[-1].isdigit() and int(parts[-1]) >= min_mb:
+            out.append({"pid": int(parts[0]), "name": os.path.basename(",".join(parts[1:-1]).split()[0]),
+                        "mb": int(parts[-1])})
+    return sorted(out, key=lambda x: -x["mb"])
+
+
+def vram_free_check():
+    """None if enough VRAM is free for a VRAM test, else the reason (with the processes holding it)."""
+    _, free, _ = nvml.memory_mb(nvml.handle(0))
+    if free >= VRAM_MIN_MB:
+        return None
+    who = ", ".join(f"{h['name']} (pid {h['pid']}, {h['mb']} MiB)" for h in vram_holders()) or "unknown processes"
+    return f"only {free} MiB of VRAM free (held by {who}); memtest_vulkan needs {VRAM_MIN_MB} MiB"
+
+
+def vram_budget_bytes(reserve_mb=768, cap_mb=None):
+    """VRAM memtest_vulkan can take: free VRAM minus a reserve for the desktop, at least 512 MiB."""
+    try:
+        _, free, _ = nvml.memory_mb(nvml.handle(0))
+    except nvml.NvmlError:
+        free = 6000
+    mb = max(512, free - reserve_mb)
+    return (min(mb, cap_mb) if cap_mb else mb) << 20
+
+
+def vram_cmd(budget_bytes=None):
+    return [MEMTEST, "1", str(budget_bytes or vram_budget_bytes())]
+
+
+def _vram(seconds, budget_bytes=None):
+    budget = budget_bytes or vram_budget_bytes()
+    total = nvml.memory_mb(nvml.handle(0))[0]
+    r = subprocess.run(["timeout", "-s", "INT", str(seconds)] + vram_cmd(budget), capture_output=True, text=True,
+                       cwd=os.path.dirname(MEMTEST))   # it writes memtest_vulkan.log into the working directory
+    return {"seconds": seconds, "budget_mb": budget >> 20, "coverage_pct": round(100 * (budget >> 20) / total, 1),
+            **parse_vram(r.returncode, r.stdout)}
 
 
 def _core(runs):
@@ -146,9 +201,14 @@ def _core(runs):
             "ok": len(good) == runs}
 
 
-def test(kind="screen", vram_seconds=300, core_runs=3, budget_bytes=6_000_000_000, note=""):
+def test(kind="screen", vram_seconds=300, core_runs=3, budget_bytes=None, note="", record=True):
     """kind: 'core' (vkpeak, score + load), 'vram' (memtest_vulkan), or 'screen' (both).
     Green = every part ok, no new Xid errors, no crash."""
+    stress.check_interrupted()
+    if kind in ("vram", "screen"):
+        short = vram_free_check()
+        if short:
+            raise RuntimeError(short + ": close them, then run the test")
     h = nvml.handle(0)
     xid_before = len(xid_errors())
     e0, t0 = nvml.energy_j(h), time.time()
@@ -156,10 +216,13 @@ def test(kind="screen", vram_seconds=300, core_runs=3, budget_bytes=6_000_000_00
     sampler.start()
     res = {"test": kind, "settings": applied() or "defaults"}
     try:
-        if kind in ("core", "screen"):
-            res["core"] = _core(core_runs)
-        if kind in ("vram", "screen"):
-            res["vram"] = _vram(vram_seconds, budget_bytes)
+        with stress.run("gpu", f"gpu-{kind}", res["settings"]) as run:
+            if kind in ("core", "screen"):
+                run.update(phase="core")
+                res["core"] = _core(core_runs)
+            if kind in ("vram", "screen"):
+                run.update(phase="vram")
+                res["vram"] = _vram(vram_seconds, budget_bytes)
     finally:
         sampler.stop.set()
         sampler.join()
@@ -172,5 +235,6 @@ def test(kind="screen", vram_seconds=300, core_runs=3, budget_bytes=6_000_000_00
     res["verdict"] = "green" if all(parts) and not new_xid else "red"
     if res.get("core", {}).get("fp32_gflops_avg") and res["telemetry"].get("power_w_avg"):
         res["gflops_per_w"] = round(res["core"]["fp32_gflops_avg"] / res["telemetry"]["power_w_avg"], 1)
-    journal.add(DATA, "result", domain="gpu", text=note or f"gpu {kind} test", **res)
+    if record:
+        journal.add(DATA, "result", domain="gpu", text=note or f"gpu {kind} test", **res)
     return res
