@@ -1,22 +1,27 @@
 # ctune
 
-ctune helps an agent tune RAM, GPU and (later) CPU on an AMD Ryzen + NVIDIA Linux system. The agent runs campaigns of single-variable steps. ctune applies or verifies each change, measures stability as corrected machine-check errors and NVIDIA Xid errors, scores performance, and logs every step in a journal. The name is a nod to C'Thun.
+ctune helps an agent tune RAM, CPU and GPU on an AMD Ryzen + NVIDIA Linux system. The agent runs campaigns of single-variable steps. ctune applies or verifies each change, measures stability as corrected machine-check errors, stress-test verification errors and NVIDIA Xid errors, scores performance, and logs every step in a journal. The name is a nod to C'Thun.
 
 It is a personal tool for a Ryzen 7 5800X3D on a B550 AORUS PRO with DDR4 and an RTX 3080 Ti. The layout leaves room for an AM5 and DDR5 version later.
 
 ## Domains
 - **mem** reads, and never writes, the memory configuration. It decodes timings per channel from the memory controller (over SMN through `ryzen_smu`), SMU clocks and voltages, every BIOS setup option by menu path (from the EFI variables and the BIOS's HII form database), and, after one boot with `iomem=relaxed`, the trained ProcODT/RTT/CAD values and SPD. The user makes every BIOS change; ctune verifies it with a snapshot and a diff.
 - **gpu** applies NVIDIA settings at runtime through NVML: core and memory clock offsets, a locked max core clock (the undervolt) and the power limit. A root helper checks every value against NVML's ranges and ctune's caps before writing. A reboot clears everything. Tests run vkpeak (FP32 score and load) and memtest_vulkan (VRAM errors and bandwidth) with 1 Hz telemetry.
-- **cpu** is planned: per-core Curve Optimizer at runtime through SMU commands, tested per core.
+- **cpu** sets the per-core Curve Optimizer margin at runtime through SMU mailbox commands (MP1 0x35 to set, 0x48 to read back; sources in `docs/research/cpu-co-smu.md`). A read-only probe must first read the BIOS margins back on every core in the same boot. A root helper then allows one core per step, -30 to +30 and at most 5 counts per change, and reads every write back. A reboot restores the BIOS margins. Tests pin one verified stress-ng thread to each core in turn (integer, FP, vector, FMA, hash, then a bursty light load, with idle gaps) and log per-core clocks and voltages from the SMU pm_table. A test cut short by a crash is recorded as red on the next boot.
 
 Shared: corrected machine-check errors per bank and subsystem, sensors with per-board labels, and the journal.
 
 ## Use
 ```bash
-bin/ctune status                         # memory + GPU status, sensors, errors, journal tail
+bin/ctune status                         # memory, CPU and GPU status, sensors, errors, journal tail
 bin/ctune mem snapshot --label X         # full memory snapshot; asks for root through pkexec
 bin/ctune mem compare                    # previous vs latest: timings, voltages, every BIOS setting
 bin/ctune mem bios ProcODT               # search the decoded BIOS settings
+bin/ctune cpu status                     # margin per core (BIOS or applied), clocks, voltage, temperature
+bin/ctune cpu probe                      # read every core's margin through the SMU; asks for root
+bin/ctune cpu apply --core 0 --margin -25 --dry-run   # guardrails and the mailbox word; drop --dry-run to apply
+bin/ctune cpu test --cores 0             # about 6 min per core, verdict green/red
+bin/ctune cpu reset                      # back to the BIOS margins
 bin/ctune gpu status                     # clocks, offsets, power, what limits the clock
 bin/ctune gpu apply --max-clock 1860 --core-offset 150   # asks for root; lasts until reboot
 bin/ctune gpu test screen                # vkpeak + memtest_vulkan with telemetry, verdict green/red
@@ -28,13 +33,14 @@ Agents get the same commands as an MCP server (`ctune/mcp_server.py`, standard l
 ## Layout
 - `ctune/core/`: journal, machine-check counters, sensors, paths.
 - `ctune/mem/`: memory API and platform collectors (`platforms/zen3_am4` works; `zen4_am5` and `zen5_am5` are detected but not built).
+- `ctune/cpu/`: SMU mailbox and pm_table access, the guarded root helper, and the per-core test runner.
 - `ctune/gpu/`: NVML binding (ctypes), the guarded root helper, and the test runner.
-- `data/` (gitignored): snapshots, `journal.jsonl`, `gpu_state.json`.
+- `tests/`: offline tests (`python3 -B -m unittest discover -s tests`).
+- `data/` (gitignored): snapshots, `journal.jsonl`, `cpu_state.json`, `gpu_state.json`.
 - `tools/` (gitignored): memtest_vulkan v0.5.0 and vkpeak 20260527 from their GitHub releases.
 - `docs/`: the first RAM review and the research notes with their sources.
 
 ## Roadmap
-1. cpu domain: runtime Curve Optimizer and per-core testing.
-2. A read-only root helper allowed by a polkit rule, so steps need no password prompt, then an unattended loop: a post-boot or post-apply runner that tests, writes the journal, and wakes the agent through a T3 webhook.
-3. A RAM stress runner, and Gigabyte profile files the user loads with "Load Profile" (needs one sample profile saved to USB).
-4. A platform-neutral snapshot format, then `zen4_am5` with the DDR5 register map and AM5 boards.
+1. A read-only root helper allowed by a polkit rule, so steps need no password prompt, then an unattended loop: a post-boot or post-apply runner that tests, writes the journal, and wakes the agent through a T3 webhook.
+2. A RAM stress runner, and Gigabyte profile files the user loads with "Load Profile" (needs one sample profile saved to USB).
+3. A platform-neutral snapshot format, then `zen4_am5` with the DDR5 register map and AM5 boards (Zen 4 Curve Optimizer runs from -50 to +50 and needs its own probe).

@@ -11,15 +11,18 @@ import traceback
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.realpath(__file__))))
 from ctune.core import errors as core_errors, journal, sensors  # noqa: E402
 from ctune.core.paths import DATA  # noqa: E402
+from ctune.cpu import api as cpu  # noqa: E402
 from ctune.gpu import api as gpu  # noqa: E402
 from ctune.mem import api as mem  # noqa: E402
 
 VERSIONS = ("2025-06-18", "2025-03-26", "2024-11-05")
 INSTRUCTIONS = (
-    "ctune tunes RAM, GPU and (later) CPU on an AMD Ryzen + NVIDIA Linux system. mem_* tools read the memory and "
+    "ctune tunes RAM, CPU and GPU on an AMD Ryzen + NVIDIA Linux system. mem_* tools read the memory and "
     "fabric configuration (timings from the memory controller, SMU clocks and voltages, every BIOS option decoded from "
-    "the EFI variables); the user makes every BIOS change. gpu_* tools read the GPU and apply clock offsets, a max-clock "
-    "lock and a power limit at runtime within guardrails; a reboot clears them. errors, sensors and journal_* are shared."
+    "the EFI variables); the user makes every BIOS change. cpu_* tools read and set the per-core Curve Optimizer margin "
+    "through the SMU at runtime and test cores one at a time. gpu_* tools read the GPU and apply clock offsets, a "
+    "max-clock lock and a power limit at runtime. cpu and gpu settings stay within guardrails and a reboot clears them. "
+    "errors, sensors and journal_* are shared."
 )
 
 
@@ -85,6 +88,31 @@ TOOLS = {
                                     note=a.get("note", ""))),
     "gpu_xid": ("NVIDIA Xid errors from the kernel log ('boot' or a journalctl --since value).",
                 _obj({"since": S}), lambda a: gpu.xid_errors(a.get("since", "boot"))),
+    # cpu
+    "cpu_status": ("Curve Optimizer margin per core (from the BIOS snapshot, or what ctune applied this boot), per-core "
+                   "clock, effective clock, voltage, power, temperature and C0 from the SMU pm_table, package power, "
+                   "core machine-check counts per CPU, this boot's probe result, and any test cut short by a crash.",
+                   _obj(), lambda a: cpu.status()),
+    "cpu_probe": ("Read every core's margin through the SMU (read-only, root, password prompt) and compare it with the "
+                  "BIOS values from the latest mem snapshot. Writes are refused until a probe in the same boot "
+                  "matches. Run it once per boot before cpu_apply, and again after any BIOS or SMU firmware change.",
+                  _obj(), lambda a: cpu.probe()),
+    "cpu_apply": ("Set one core's Curve Optimizer margin at runtime (root, password prompt), then read it back. margin "
+                  "is -30..30 and at most 5 away from the core's current value. dry_run checks the guardrails and "
+                  "shows the SMU mailbox word without sending anything. The margin lasts until reboot.",
+                  _obj({"core": {"type": "integer"}, "margin": {"type": "integer"}, "dry_run": {"type": "boolean"}},
+                       ["core", "margin"]),
+                  lambda a: cpu.apply(a["core"], a["margin"], a.get("dry_run", False))),
+    "cpu_reset": ("Restore the boot (BIOS) margin of every core ctune changed this boot (root, password prompt).",
+                  _obj(), lambda a: cpu.reset()),
+    "cpu_test": ("Per-core stability test, recorded in the journal: one verified stress-ng thread pinned to each core in "
+                 "turn (FFT, int64, matrix, wide vector, FMA, hash, then a bursty 25 % load), with idle gaps between "
+                 "phases and 1 Hz per-core telemetry. Takes about seconds_per_core (default 360) per core. Returns "
+                 "verdict green/red, red cores, per-phase clocks and voltages, and new corrected machine-check errors.",
+                 _obj({"cores": {"type": "array", "items": {"type": "integer"}}, "seconds_per_core": {"type": "integer"},
+                       "order": {"type": "string", "enum": ["sequential", "random"]}, "note": S}),
+                 lambda a: cpu.test(a.get("cores"), a.get("seconds_per_core", 360), a.get("order", "sequential"),
+                                    note=a.get("note", ""))),
 }
 
 
@@ -106,7 +134,7 @@ def handle(msg):
         v = params.get("protocolVersion")
         _reply(id_, {"protocolVersion": v if v in VERSIONS else VERSIONS[0],
                      "capabilities": {"tools": {"listChanged": False}},
-                     "serverInfo": {"name": "ctune", "version": "0.2.0"},
+                     "serverInfo": {"name": "ctune", "version": "0.3.0"},
                      "instructions": INSTRUCTIONS})
     elif method == "ping":
         _reply(id_, {})

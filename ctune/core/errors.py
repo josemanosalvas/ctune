@@ -39,6 +39,35 @@ def counts():
     return out
 
 
+def counts_by_cpu(root=ROOT, subsystems=("core", "core/l3")):
+    """{cpu: {bank: count}} per logical CPU for the banks of the given subsystems. A Curve Optimizer error lands in
+    the core banks of the CPU that ran the failing code, so a per-CPU delta points at the core."""
+    out = {}
+    for p in glob.glob(f"{root}/machinecheck*/*/*/error_count"):
+        parts = p.split("/")
+        bank = parts[-3]
+        if SUBSYSTEM.get(_family(bank)) not in subsystems:
+            continue
+        try:
+            with open(p) as f:
+                cpu, n = int(parts[-4][len("machinecheck"):]), int(f.read().strip() or 0)
+        except (OSError, ValueError):
+            continue
+        out.setdefault(cpu, {})[bank] = n
+    return out
+
+
+def delta_by_cpu(before, after):
+    """{cpu: {bank: increase}} for counters that went up between two counts_by_cpu() readings."""
+    out = {}
+    for cpu, banks in after.items():
+        for bank, n in banks.items():
+            d = n - before.get(cpu, {}).get(bank, 0)
+            if d > 0:
+                out.setdefault(cpu, {})[bank] = d
+    return out
+
+
 def check_interval():
     try:
         return int(open(f"{ROOT}/machinecheck0/check_interval").read())

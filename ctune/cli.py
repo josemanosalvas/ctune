@@ -1,4 +1,4 @@
-"""ctune CLI.  `ctune -h`, `ctune mem -h`, `ctune gpu -h`."""
+"""ctune CLI.  `ctune -h`, `ctune mem -h`, `ctune gpu -h`, `ctune cpu -h`."""
 import argparse
 import json
 import sys
@@ -7,6 +7,7 @@ from ctune.core import errors as core_errors
 from ctune.core import journal
 from ctune.core import sensors
 from ctune.core.paths import DATA
+from ctune.cpu import api as cpu
 from ctune.gpu import api as gpu
 from ctune.mem import api as mem
 
@@ -18,7 +19,7 @@ def _out(x):
 def build():
     ap = argparse.ArgumentParser(prog="ctune", description="Agent-assisted RAM / CPU / GPU tuning toolkit")
     sub = ap.add_subparsers(dest="cmd", required=True)
-    sub.add_parser("status", help="memory + GPU status, sensors, error counters, journal tail")
+    sub.add_parser("status", help="memory, CPU and GPU status, sensors, error counters, journal tail")
     sub.add_parser("sensors", help="VDIMM/VTT/VSOC, fans per header, temps")
     s = sub.add_parser("errors", help="corrected machine-check errors per bank (WHEA equivalent)")
     s.add_argument("--since", default="-24h")
@@ -66,6 +67,20 @@ def build():
     s.add_argument("--note", default="")
     s = g.add_parser("xid", help="NVIDIA Xid errors from the kernel log")
     s.add_argument("--since", default="boot")
+
+    c = sub.add_parser("cpu", help="Curve Optimizer per core").add_subparsers(dest="ccmd", required=True)
+    c.add_parser("status", help="margin per core (BIOS or ctune), clocks, voltage, temperature, core MCA errors")
+    c.add_parser("probe", help="read every core's margin through the SMU and compare with the BIOS (root via pkexec)")
+    s = c.add_parser("apply", help="set one core's margin (root via pkexec); lasts until reboot")
+    s.add_argument("--core", type=int, required=True)
+    s.add_argument("--margin", type=int, required=True, help="-30..30, at most 5 away from the current value")
+    s.add_argument("--dry-run", action="store_true", help="check the guardrails and print the mailbox word; send nothing")
+    c.add_parser("reset", help="restore the boot (BIOS) margin of every core ctune changed (root via pkexec)")
+    s = c.add_parser("test", help="one verified stress-ng thread per core, varied loads and idle gaps, with telemetry")
+    s.add_argument("--cores", help="comma-separated core numbers (default all)")
+    s.add_argument("--seconds-per-core", type=int, default=360)
+    s.add_argument("--order", default="sequential", choices=["sequential", "random"])
+    s.add_argument("--note", default="")
     return ap
 
 
@@ -73,10 +88,11 @@ def main(argv=None):
     a = build().parse_args(argv)
     if a.cmd == "status":
         st = mem.status()
-        try:
-            st["gpu"] = gpu.status()
-        except Exception as e:
-            st["gpu"] = f"unavailable: {e}"
+        for name, fn in (("cpu", cpu.status), ("gpu", gpu.status)):
+            try:
+                st[name] = fn()
+            except Exception as e:
+                st[name] = f"unavailable: {e}"
         _out(st)
     elif a.cmd == "sensors":
         _out(sensors.read())
@@ -116,6 +132,18 @@ def main(argv=None):
             _out(gpu.test(a.kind, a.vram_seconds, a.core_runs, note=a.note))
         elif a.gcmd == "xid":
             _out(gpu.xid_errors(a.since))
+    elif a.cmd == "cpu":
+        if a.ccmd == "status":
+            _out(cpu.status())
+        elif a.ccmd == "probe":
+            _out(cpu.probe())
+        elif a.ccmd == "apply":
+            _out(cpu.apply(a.core, a.margin, a.dry_run))
+        elif a.ccmd == "reset":
+            _out(cpu.reset())
+        elif a.ccmd == "test":
+            cores = [int(x) for x in a.cores.split(",")] if a.cores else None
+            _out(cpu.test(cores, a.seconds_per_core, a.order, note=a.note))
     return 0
 
 
