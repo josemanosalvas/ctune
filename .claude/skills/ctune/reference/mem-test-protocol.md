@@ -1,6 +1,6 @@
 # Test protocol on Linux
 
-memtune has no stress runner yet. The user runs these by hand, or from a distrobox for tools that Bazzite lacks.
+ctune has no RAM stress runner yet. The user runs these by hand, or from a distrobox for tools that Bazzite lacks.
 
 - **Screen** (every step, 20 to 30 minutes, warm). Size stressapptest from `MemAvailable` minus about 1.5 GB, for example `stressapptest -M <MB> -s 1800 -W`. Run a GPU load (a game or a GPU stress test) at the same time so the DIMMs heat up. Turn zram off or lower `vm.swappiness` first, so the test exercises DRAM rather than swap.
 - **Fabric screen** (FCLK steps). Run a combined CPU, GPU and NVMe load for 1 to 2 hours, then leave the machine idle for a while. Random reboots at idle are the classic FCLK symptom.

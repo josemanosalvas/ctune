@@ -4,13 +4,12 @@ import os
 import subprocess
 import sys
 
-from memtune import platforms
-from memtune.core import errors as _errors
-from memtune.core import journal as _journal
-from memtune.core import sensors as _sensors
+from ctune.mem import platforms
+from ctune.core import errors as _errors
+from ctune.core import journal as _journal
+from ctune.core import sensors as _sensors
 
-REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-DATA = os.environ.get("MEMTUNE_DATA", os.path.join(REPO, "data"))
+from ctune.core.paths import DATA, REPO  # noqa: E402,F401
 SNAPS = os.path.join(DATA, "snapshots")
 
 
@@ -121,7 +120,7 @@ def journal_list(n=20, kind=None):
     return _journal.tail(DATA, n, kind)
 
 
-def status():
+def status():  # memory-side status
     p = platforms.detect()
     snaps = snapshots()
     return {

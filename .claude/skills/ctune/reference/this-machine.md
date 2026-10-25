@@ -13,5 +13,9 @@ Facts that `status` and the snapshots cannot show. Read live values from the too
   - "Load Optimized Defaults" resets everything, including the SYS_FAN4 fan curve.
   - All 8 profile slots are full and stamped F16b.
   - An update to F19c (AGESA 1.2.0.12) is planned.
+- **GPU.** MSI RTX 3080 Ti Suprim X: 400 W default power limit (100 to 440 W allowed), max boost 2145 MHz.
+  - Stock baseline on 2026-10-25 (`gpu_test` screen, 1 core run): FP32 26,666 GFLOPS, 1,639 MHz average under load, 307 W average, VRAM 768 GB/s with no errors, 78 °C max.
+  - The power limit caps the clock about two thirds of the time under load, so an undervolt has real headroom.
+  - The GPU controls its own fans; CoolerControl uses GPU temperatures as inputs for the case-fan curves.
 - **Drivers.** The out-of-tree it87 driver in `/var/lib/it87-local` is rebuilt for each kernel by `/usr/local/sbin/load-it87-dkms`.
 - **Open questions.** The trained RTT and CAD values and the SPD/XMP data need one boot with the kernel argument `iomem=relaxed`, followed by a snapshot.
