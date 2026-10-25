@@ -12,7 +12,7 @@ Facts that `status` and the snapshots cannot show. Read live values from the too
   - Enter memory settings in Tweaker (M.I.T.). AMD CBS copies them one save later.
   - "Load Optimized Defaults" resets everything, including the SYS_FAN4 fan curve.
   - All 8 profile slots are full and stamped F16b.
-  - An update to F19c (AGESA 1.2.0.12) is planned.
+  - An update to F19c (AGESA 1.2.0.12) is planned. F19c moves the Tweaker settings by +4 or +5 bytes; the decoder finds settings by menu location, and the F19c image resolves every key setting except the per-core CO questions, which AGESA adds at boot. The first F19c snapshot must show no `bios_key_problems`.
 - **CPU.** ctune's runtime Curve Optimizer path was checked on F16b with SMU firmware 56.74.0 on 2026-10-25. `cpu_probe` read all eight BIOS margins back exactly. A no-op `cpu_apply` of core 1 at -30 read back -30, with zero corrected errors afterwards. The F19c flash changes the SMU firmware, so the probe has to match again before the first write.
 - **GPU.** MSI RTX 3080 Ti Suprim X: 400 W default power limit (100 to 440 W allowed), max boost 2145 MHz.
   - Stock baseline on 2026-10-25, measured with vkpeak before gpu-burn replaced it (1 run): FP32 26,666 GFLOPS, 1,639 MHz average under load, 307 W average, VRAM 768 GB/s with no errors, 78 °C max.

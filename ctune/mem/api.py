@@ -64,7 +64,15 @@ def snapshot(label="", skip_devmem=False):
     d = [l for l in r.stdout.splitlines() if l.startswith(SNAPS)]
     d = d[-1] if d else resolve("latest")
     _journal.add(DATA, "applied", snapshot=os.path.basename(d), label=label)
-    return {"dir": d, "summary": summary(d)}
+    out = {"dir": d, "summary": summary(d)}
+    try:  # after a BIOS update: key settings whose menu location changed (bios_settings_decode.KEY)
+        with open(os.path.join(d, "decoded", "bios_settings.json")) as f:
+            problems = json.load(f).get("key_problems")
+    except (OSError, ValueError):
+        problems = None
+    if problems:
+        out["bios_key_problems"] = problems
+    return out
 
 
 def summary(name="latest"):

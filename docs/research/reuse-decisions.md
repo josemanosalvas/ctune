@@ -36,7 +36,16 @@ Already done in ctune, no install needed:
 
 ## 3. BIOS setup decoder (mem domain)
 
-**Urgent, and not a tool choice: fix it before trusting any decode after the F19c flash.** F19c's Setup (Tweaker) varstore grows from 646 to 650 bytes, and 418 questions shift by +4 or +5 bytes. For example, CAS Latency moves from Setup@368 to @373, tRFC from 394 to 399, and DRAM Voltage from 508 to 513. The tables `KEY`, `CHECKS` and `GBT_VOLT` in `bios_settings_decode.py` (L674-724, L768-877) are keyed by F16b offsets and would quietly attach values to the wrong settings. They need re-keying by menu path plus prompt, as `verify.py` already does. `CHECKS` also hard-codes this machine's tuned values (tCL 14, tRFC 288), which fail by design after "Load Optimized Defaults"; retire it in favour of `verify.py`'s live-hardware check. `mem_checklist` is not affected: it reads the pre-flash snapshot.
+**Fixed on 2026-10-25, before the flash.** F19c's Setup (Tweaker) varstore grows from 646 to 650 bytes, and 418 questions shift by +4 or +5 bytes. For example, CAS Latency moves from Setup@368 to @373, tRFC from 394 to 399, and DRAM Voltage from 508 to 513. `KEY` and `GBT_VOLT` in `bios_settings_decode.py` were keyed by F16b offsets and would have attached values to the wrong settings without any error.
+- **The fix.** They are now keyed by varstore, menu path and prompt, as `verify.py` already was. `find_row` refuses a location that matches several storage locations rather than guessing; an op or width filter separates them.
+- **Retired.** `CHECKS` hard-coded this machine's tuned values (tCL 14, tRFC 288), which fail by design after "Load Optimized Defaults". `verify.py`'s live-hardware check (`mem_verify`) covers the same settings.
+- **Checked.**
+  - On the F16b snapshot, all 118 entries resolve to their old offsets, and the decoded questions, settings and focus tables are unchanged.
+  - On the F19c image (Setup, the 0x7a19 CBS, AOD and PBS forms carved from the LZMA volume at 0x1b10e88), 102 entries resolve: the Tweaker ones moved +5 (60) or +4 (3), and CBS and AOD did not move. The other 16 are the per-core CO questions, which are not in the image's forms because AGESA adds them at boot.
+  - Every prompt `verify.py` uses exists on F19c.
+- **Tests.** `tests/test_bios_keys.py` with both layouts in `tests/fixtures/bios_key_rows.json`.
+- **After the flash.** The decoder lists any key setting it cannot find, and `mem_snapshot` returns it as `bios_key_problems`.
+- **Not affected.** `mem_checklist` reads the pre-flash snapshot.
 
 | Option | Pros | Cons |
 |---|---|---|
@@ -46,7 +55,7 @@ Already done in ctune, no install needed:
 | **Retire or parametrize `tools/verify_hii_settings.py`** (a second in-house parser with a hard-coded scratch path). | Removes duplicate parsing, or makes the check repeatable on F19c. | Loses an independent parser if it is retired without IFRExtractor-RS taking its place. |
 
 **Recommendation:**
-1. Re-key `KEY`, `CHECKS` and `GBT_VOLT` by menu path plus prompt before the flash.
+1. ~~Re-key `KEY`, `CHECKS` and `GBT_VOLT` by menu path plus prompt before the flash.~~ Done.
 2. Add the completeness checks.
 3. Adopt IFRExtractor-RS as a per-BIOS-version cross-check that replaces `verify_hii_settings.py`.
 

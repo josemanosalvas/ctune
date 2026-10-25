@@ -501,7 +501,7 @@ def md_escape(s):
     return (s or "").replace("|", "\\|").replace("\r", " ").replace("\n", " ")
 
 
-def write_outputs(res, out_dir, focus_md, checks):
+def write_outputs(res, out_dir, focus_md, problems):
     os.makedirs(out_dir, exist_ok=True)
     rows = res["rows"]
     js = dict(
@@ -514,7 +514,7 @@ def write_outputs(res, out_dir, focus_md, checks):
         varstore_check=res["vs_report"],
         stddefaults=[dict(name=e.get("name"), guid=e.get("guid"), attr=e["attr"], size=len(e["data"]))
                      for e in res["std_entries"]],
-        sanity_checks=checks,
+        key_problems=problems,
         questions=[{k: v for k, v in r.items() if not k.startswith("_")} for r in rows],
         settings=[{**{kk: vv for kk, vv in s.items() if not kk.startswith("_")}, "key": f"{k[0]}@{k[2]}/{k[3]}"}
                   for k, s in res["settings"].items()],
@@ -565,11 +565,10 @@ def write_outputs(res, out_dir, focus_md, checks):
           "Conditions on boot-time-only stores (AmiAmdSbSuppressIfSetupData, AMICallback) stay unknown ('?').")
     A("- Gigabyte voltage fields store a UI code, not mV: see the note at GBT_VOLT in the script; the "
       "volt values shown are inferred from Gigabyte's EasyTune ACPI table 'GSAT' (F19c image) and are marked as such.\n")
-    A("## Sanity checks\n")
-    A("| Check | Expected | Decoded | Result |\n|---|---|---|---|")
-    for c in checks:
-        A(f"| {md_escape(c['check'])} | {md_escape(str(c['expected']))} | {md_escape(str(c['decoded']))} | {c['result']} |")
-    A("")
+    A("## Key table check\n")
+    A("Every key setting was found. Compare them with the running hardware with `ctune mem verify`.\n" if not problems
+      else "These key settings match no question, or several; fix KEY in bios_settings_decode.py:\n\n"
+      + "\n".join(f"- {md_escape(p)}" for p in problems) + "\n")
     A("### Varstore size check (IFR VARSTORE size vs efivar data size)\n")
     A("| Varstore | GUID | IFR size | efivar size | match | in StdDefaults |\n|---|---|---|---|---|---|")
     for v in res["vs_report"]:
@@ -635,7 +634,40 @@ def write_outputs(res, out_dir, focus_md, checks):
                 fo.write(fi.read())
 
 
-# ----------------------------------------------------------------------------- focused memory section + checks
+# ----------------------------------------------------------------------------- focused memory section
+# Settings are found by menu location ("form path :: prompt") and varstore, never by offset alone: a BIOS update moves
+# offsets. F19c's Setup store grows from 646 to 650 bytes and 418 Tweaker questions shift by +4 or +5 bytes against
+# F16b (CAS Latency Setup@368 -> 373), so an offset table would show another setting's value without any error.
+TW_FREQ = "Setup > M.I.T. > Advanced Frequency Settings"
+TW_CPU = TW_FREQ + " > Advanced CPU Settings"
+TW_MEM = "Setup > M.I.T. > Advanced Memory Settings"
+TW_SUB_A = TW_MEM + " > Channel A Memory Sub Timings"
+TW_SUB_B = TW_MEM + " > Channel B Memory Sub Timings"
+TW_VOLT = "Setup > M.I.T. > Advanced Voltage Settings"
+CBS_TIM = "AMD CBS > UMC Common Options > DDR4 Common Options > DRAM Timing Configuration"
+CBS_CTL = "AMD CBS > UMC Common Options > DDR4 Common Options > DRAM Controller Configuration"
+CBS_PWR = CBS_CTL + " > DRAM Power Options"
+CBS_XFR = "AMD CBS > XFR Enhancement"
+CBS_SMU = "AMD CBS > NBIO Common Options > SMU Common Options"
+AOD = "AMD Overclocking Option"
+AOD_DDR = AOD + " > DDR and Infinity Fabric Frequency/Timings"
+AOD_CO = AOD + " > Curve Optimizer"
+
+
+def find_row(res, store, path, prompt, op=None, width=None):
+    """(row, None) for the question at path :: prompt in varstore store, or (None, reason). Several storage
+    locations at one menu location count as a failure, never a guess: op or width tell them apart (AOD's
+    'VDDP Voltage Control' is both the Auto/Manual switch and the mV value). Prefers a row visible now."""
+    cands = [r for r in res["rows"] if r.get("varstore") == store and r.get("form_path") == path
+             and r.get("prompt") == prompt and r["op"] not in ("REF", "ACTION")
+             and op in (None, r["op"]) and width in (None, r.get("width"))]
+    where = {(r["offset"], r.get("width")) for r in cands}
+    if len(where) != 1:
+        return None, ("not found" if not where else
+                      "ambiguous: " + ", ".join(f"{store}@{o}/{w}" for o, w in sorted(where)))
+    return next(r for want in (True, None, False) for r in cands if r.get("visible_now") is want), None
+
+
 # Gigabyte "Advanced Voltage Settings" (Setup varstore) store a UI code, not millivolts. 0xFFFF = Auto.
 # Ranges below come from Gigabyte's EasyTune ACPI voltage table "GSAT" (Name(GSAT, Package(){...}) in an
 # SSDT of the F19c image, decompressed from /tmp/gbzips/x_f19c/B550AORUSPRO.F19c; the F16b SSDT could not be
@@ -644,22 +676,25 @@ def write_outputs(res, out_dir, focus_md, checks):
 # DDR VTT proxy (IT8792E in1 0.763 V -> ~1.53 V); the "from max" reading (1.45 V) does not. For CPU Vcore / VCORE SOC
 # the IFR greys out DVID unless code == 1 (help text: DVID only with 'Normal'), so codes 0/1 are special (Auto/Normal)
 # and the first voltage may be code 2 -> alternative value (min + (code-2)*step).
+# Keyed by prompt on the TW_VOLT page (Setup varstore): prompt -> (min V, step V, codes 0/1 reserved).
 GBT_VOLT = {
-    490: ("CPU Vcore", 0.750, 0.00625, True),
-    494: ("VCORE SOC", 0.750, 0.00625, True),
-    502: ("CPU VDDP (offset?)", -0.200, 0.020, False),
-    504: ("CPU VDD18", 1.600, 0.040, False),
-    506: ("A_VDD18S5", 1.500, 0.020, False),
-    508: ("DRAM Voltage (CH A/B)", 1.000, 0.010, False),
-    510: ("DDRVPP (CH A/B)", 1.980, 0.040, False),
-    512: ("DRAM Termination (CH A/B)", 0.450, 0.005, False),
+    "CPU Vcore": (0.750, 0.00625, True),
+    "VCORE SOC": (0.750, 0.00625, True),
+    "CPU VDDP": (-0.200, 0.020, False),   # maybe an offset, not an absolute voltage
+    "CPU VDD18": (1.600, 0.040, False),
+    "A_VDD18S5": (1.500, 0.020, False),
+    "DRAM Voltage      (CH A/B)": (1.000, 0.010, False),
+    "DDRVPP Voltage    (CH A/B)": (1.980, 0.040, False),
+    "DRAM Termination  (CH A/B)": (0.450, 0.005, False),
 }
 
 
-def gbt_volt_text(off, v):
-    if off not in GBT_VOLT or v is None:
+def gbt_volt_text(r):
+    """Inferred volts for a Gigabyte voltage code, or None when r is not one of GBT_VOLT's questions."""
+    v = r.get("value")
+    if r.get("varstore") != "Setup" or r.get("form_path") != TW_VOLT or r.get("prompt") not in GBT_VOLT or v is None:
         return None
-    name, mn, st, special = GBT_VOLT[off]
+    mn, st, special = GBT_VOLT[r["prompt"]]
     if v == 0xFFFF:
         return "Auto"
     if special and v in (0, 1):
@@ -670,57 +705,129 @@ def gbt_volt_text(off, v):
     return t
 
 
-# (label, varstore, offset) - the compact "what is actually configured" table
+# (label, varstore, form path, prompt[, {op or width}]) - the compact "what is actually configured" table
 KEY = [
-    ("XMP", "Setup", 338), ("Memory speed (System Memory Multiplier, x100)", "Setup", 341),
-    ("Memory Timing Mode", "Setup", 345), ("CBS Overclock (UMC)", "AmdSetup", 212),
-    ("CBS Memory Clock Speed", "AmdSetup", 213), ("CBS FCLK Frequency", "AmdSetup", 338),
-    ("CBS UCLK DIV1 MODE", "AmdSetup", 341), ("AOD Memory Clock Speed", "AOD_SETUP", 73),
-    ("tCL (Tweaker)", "Setup", 368), ("tRCDRD", "Setup", 372), ("tRCDWR", "Setup", 374), ("tRP", "Setup", 376),
-    ("tRAS", "Setup", 378), ("tRC", "Setup", 380), ("tWR", "Setup", 382), ("tCWL", "Setup", 384),
-    ("tRRD_S", "Setup", 386), ("tRRD_L", "Setup", 388), ("tWTR_S", "Setup", 390), ("tWTR_L", "Setup", 392),
-    ("tRFC", "Setup", 394), ("tRFC2", "Setup", 396), ("tRFC4", "Setup", 398), ("tRTP", "Setup", 400),
-    ("tFAW", "Setup", 402), ("tRDWR", "Setup", 406), ("tWRRD", "Setup", 416), ("tRDRD SC/SD/DD", "Setup", 408),
-    ("tRDRDSD", "Setup", 410), ("tRDRDDD", "Setup", 412), ("tRDRD_SCL", "Setup", 414), ("tWRWRSC", "Setup", 418),
-    ("tWRWRSD", "Setup", 420), ("tWRWRDD", "Setup", 422), ("tWRWR_SCL", "Setup", 424), ("tCKE", "Setup", 426),
-    ("Channel B timings (Advanced Manual only)", "Setup", 428),
-    ("ProcODT (Tweaker)", "Setup", 352), ("ProcODT (CBS)", "AmdSetup", 256), ("Command Rate", "Setup", 353),
-    ("Gear Down Mode (Tweaker)", "Setup", 354), ("Gear Down Mode (CBS)", "AmdSetup", 258),
-    ("Power Down Enable (CBS)", "AmdSetup", 259), ("Power Down Enable (AOD)", "AOD_SETUP", 121),
-    ("RttNom (Tweaker)", "Setup", 365), ("RttWr (Tweaker)", "Setup", 366), ("RttPark (Tweaker)", "Setup", 367),
-    ("AddrCmdSetup (Tweaker)", "Setup", 355), ("CsOdtSetup", "Setup", 357), ("CkeSetup", "Setup", 359),
-    ("ClkDrvStren", "Setup", 361), ("AddrCmdDrvStren", "Setup", 362), ("CsOdtDrvStren", "Setup", 363),
-    ("CkeDrvStren", "Setup", 364), ("AOD Data Bus Configuration User Controls", "AOD_SETUP", 131),
-    ("AOD CAD Bus Timing User Controls", "AOD_SETUP", 122), ("AOD CAD Bus Drive Strength User Controls", "AOD_SETUP", 126),
-    ("BankGroupSwap (CBS)", "AmdSetup", 288), ("BankGroupSwapAlt (CBS)", "AmdSetup", 289),
-    ("Memory interleaving (CBS)", "AmdSetup", 187), ("Channel Interleaving (Tweaker)", "Setup", 350),
-    ("Rank Interleaving (Tweaker)", "Setup", 351), ("TSME (CBS)", "AmdSetup", 285),
-    ("DRAM Voltage (CH A/B)", "Setup", 508), ("DDRVPP Voltage", "Setup", 510), ("DRAM Termination", "Setup", 512),
-    ("VCORE SOC", "Setup", 494), ("Dynamic VCORE SOC (DVID)", "Setup", 496), ("Vcore SOC LLC", "Setup", 516),
-    ("CPU VDDP (Tweaker)", "Setup", 502), ("CPU VDD18", "Setup", 504),
-    ("AOD VDDP Voltage Control", "AOD_SETUP", 184), ("AOD VDDP [mV]", "AOD_SETUP", 185),
-    ("AOD VDDG Voltage Control", "AOD_SETUP", 189), ("AOD Global VDDG CCD [mV]", "AOD_SETUP", 579),
-    ("AOD Global VDDG IOD [mV]", "AOD_SETUP", 577), ("AOD SoC/Uncore OC Mode", "AOD_SETUP", 138),
-    ("AOD SoC Voltage [mV]", "AOD_SETUP", 335), ("CBS SOC OVERCLOCK VID", "AmdSetup", 340),
-    ("CBS VDDP Voltage Control", "AmdSetup", 366), ("CBS VDDG Voltage Control", "AmdSetup", 558),
-    ("DF Cstates (CBS)", "AmdSetup", 383), ("APBDIS (CBS)", "AmdSetup", 382), ("Fixed SOC Pstate (CBS)", "AmdSetup", 384),
-    ("Global C-state Control (Tweaker)", "Setup", 329), ("Power Supply Idle Control (Tweaker)", "Setup", 330),
-    ("Global C-state Control (CBS)", "AmdSetup", 36), ("Power Supply Idle Control (CBS)", "AmdSetup", 37),
-    ("CPPC / Preferred Cores (Tweaker)", "Setup", 336), ("IOMMU (CBS)", "AmdSetup", 329),
-    ("Precision Boost Overdrive (AOD)", "AOD_SETUP", 142), ("PBO Limits (AOD)", "AOD_SETUP", 143),
-    ("PBO Scalar (AOD)", "AOD_SETUP", 164), ("CPU Boost Clock Override (AOD)", "AOD_SETUP", 182),
-    ("Curve Optimizer (AOD)", "AOD_SETUP", 368),
-    ("CO core 0 sign", "AOD_SETUP", 372), ("CO core 0 magnitude", "AOD_SETUP", 436),
-    ("CO core 1 sign", "AOD_SETUP", 373), ("CO core 1 magnitude", "AOD_SETUP", 438),
-    ("CO core 2 sign", "AOD_SETUP", 374), ("CO core 2 magnitude", "AOD_SETUP", 440),
-    ("CO core 3 sign", "AOD_SETUP", 375), ("CO core 3 magnitude", "AOD_SETUP", 442),
-    ("CO core 4 sign", "AOD_SETUP", 376), ("CO core 4 magnitude", "AOD_SETUP", 444),
-    ("CO core 5 sign", "AOD_SETUP", 377), ("CO core 5 magnitude", "AOD_SETUP", 446),
-    ("CO core 6 sign", "AOD_SETUP", 378), ("CO core 6 magnitude", "AOD_SETUP", 448),
-    ("CO core 7 sign", "AOD_SETUP", 379), ("CO core 7 magnitude", "AOD_SETUP", 450),
-    ("CBS Precision Boost Overdrive (XFR)", "AmdSetup", 342), ("CBS OC Mode", "AmdSetup", 55),
-    ("Spread Spectrum (Tweaker)", "Setup", 307), ("SVM Mode (Tweaker)", "Setup", 327),
-    ("Above 4G Decoding", "Setup", 642), ("Re-Size BAR", "Setup", 643), ("CSM Support", "Setup", 532),
+    ("XMP", "Setup", TW_FREQ, "Extreme Memory Profile(X.M.P.)"),
+    ("Memory speed (System Memory Multiplier, x100)", "Setup", TW_FREQ, "System Memory Multiplier"),
+    ("Memory Timing Mode", "Setup", TW_SUB_A, "Memory Timing Mode"),
+    ("CBS Overclock (UMC)", "AmdSetup", CBS_TIM, "Overclock"),
+    ("CBS Memory Clock Speed", "AmdSetup", CBS_TIM, "Memory Clock Speed"),
+    ("CBS FCLK Frequency", "AmdSetup", CBS_XFR, "FCLK Frequency"),
+    ("CBS UCLK DIV1 MODE", "AmdSetup", CBS_XFR, "UCLK DIV1 MODE"),
+    ("AOD Memory Clock Speed", "AOD_SETUP", AOD_DDR + " > DRAM Timing Configuration", "Memory Clock Speed"),
+    ("tCL (Tweaker)", "Setup", TW_SUB_A, "CAS Latency"),
+    ("tRCDRD", "Setup", TW_MEM, "tRCDRD"),
+    ("tRCDWR", "Setup", TW_MEM, "tRCDWR"),
+    ("tRP", "Setup", TW_SUB_A, "tRP"),
+    ("tRAS", "Setup", TW_SUB_A, "tRAS"),
+    ("tRC", "Setup", TW_MEM, "tRC"),
+    ("tWR", "Setup", TW_MEM, "tWR"),
+    ("tCWL", "Setup", TW_MEM, "tCWL"),
+    ("tRRD_S", "Setup", TW_MEM, "tRRD_S"),
+    ("tRRD_L", "Setup", TW_MEM, "tRRD_L"),
+    ("tWTR_S", "Setup", TW_MEM, "tWTR_S"),
+    ("tWTR_L", "Setup", TW_MEM, "tWTR_L"),
+    ("tRFC", "Setup", TW_MEM, "tRFC"),
+    ("tRFC2", "Setup", TW_MEM, "tRFC2"),
+    ("tRFC4", "Setup", TW_MEM, "tRFC4"),
+    ("tRTP", "Setup", TW_MEM, "tRTP"),
+    ("tFAW", "Setup", TW_MEM, "tFAW"),
+    ("tRDWR", "Setup", TW_MEM, "tRDWR"),
+    ("tWRRD", "Setup", TW_MEM, "tWRRD"),
+    ("tRDRD SC/SD/DD", "Setup", TW_MEM, "tRDRDSC"),
+    ("tRDRDSD", "Setup", TW_MEM, "tRDRDSD"),
+    ("tRDRDDD", "Setup", TW_MEM, "tRDRDDD"),
+    ("tRDRD_SCL", "Setup", TW_MEM, "tRDRD_SCL"),
+    ("tWRWRSC", "Setup", TW_MEM, "tWRWRSC"),
+    ("tWRWRSD", "Setup", TW_MEM, "tWRWRSD"),
+    ("tWRWRDD", "Setup", TW_MEM, "tWRWRDD"),
+    ("tWRWR_SCL", "Setup", TW_MEM, "tWRWR_SCL"),
+    ("tCKE", "Setup", TW_MEM, "tCKE"),
+    ("Channel B timings (Advanced Manual only)", "Setup", TW_SUB_B, "CAS Latency"),
+    ("ProcODT (Tweaker)", "Setup", TW_MEM, "ProcODT"),
+    ("ProcODT (CBS)", "AmdSetup", CBS_TIM, "ProcODT"),
+    ("Command Rate", "Setup", TW_MEM, "Command Rate(tCMD)"),
+    ("Gear Down Mode (Tweaker)", "Setup", TW_MEM, "Gear Down Mode"),
+    ("Gear Down Mode (CBS)", "AmdSetup", CBS_CTL, "Gear Down Mode"),
+    ("Power Down Enable (CBS)", "AmdSetup", CBS_PWR, "Power Down Enable"),
+    ("Power Down Enable (AOD)", "AOD_SETUP", AOD_DDR, "Power Down Enable"),
+    ("RttNom (Tweaker)", "Setup", TW_MEM, "RttNom"),
+    ("RttWr (Tweaker)", "Setup", TW_MEM, "RttWr"),
+    ("RttPark (Tweaker)", "Setup", TW_MEM, "RttPark"),
+    ("AddrCmdSetup (Tweaker)", "Setup", TW_MEM, "AddrCmdSetup"),
+    ("CsOdtSetup", "Setup", TW_MEM, "CsOdtSetup"),
+    ("CkeSetup", "Setup", TW_MEM, "CkeSetup"),
+    ("ClkDrvStren", "Setup", TW_MEM, "ClkDrvStren"),
+    ("AddrCmdDrvStren", "Setup", TW_MEM, "AddrCmdDrvStren"),
+    ("CsOdtDrvStren", "Setup", TW_MEM, "CsOdtDrvStren"),
+    ("CkeDrvStren", "Setup", TW_MEM, "CkeDrvStren"),
+    ("AOD Data Bus Configuration User Controls", "AOD_SETUP", AOD_DDR + " > Data Bus Configuration",
+     "Data Bus Configuration User Controls"),
+    ("AOD CAD Bus Timing User Controls", "AOD_SETUP", AOD_DDR + " > CAD Bus Configuration",
+     "CAD Bus Timing User Controls"),
+    ("AOD CAD Bus Drive Strength User Controls", "AOD_SETUP", AOD_DDR + " > CAD Bus Configuration",
+     "CAD Bus Drive Strength User Controls"),
+    ("BankGroupSwap (CBS)", "AmdSetup", "AMD CBS > UMC Common Options > DRAM Memory Mapping", "BankGroupSwap"),
+    ("BankGroupSwapAlt (CBS)", "AmdSetup", "AMD CBS > UMC Common Options > DRAM Memory Mapping", "BankGroupSwapAlt"),
+    ("Memory interleaving (CBS)", "AmdSetup", "AMD CBS", "Memory interleaving"),
+    ("Channel Interleaving (Tweaker)", "Setup", TW_MEM, "Channel Interleaving"),
+    ("Rank Interleaving (Tweaker)", "Setup", TW_MEM, "Rank Interleaving"),
+    ("TSME (CBS)", "AmdSetup", "AMD CBS > UMC Common Options > DDR4 Common Options > Security", "TSME"),
+    ("DRAM Voltage (CH A/B)", "Setup", TW_VOLT, "DRAM Voltage      (CH A/B)"),
+    ("DDRVPP Voltage", "Setup", TW_VOLT, "DDRVPP Voltage    (CH A/B)"),
+    ("DRAM Termination", "Setup", TW_VOLT, "DRAM Termination  (CH A/B)"),
+    ("VCORE SOC", "Setup", TW_VOLT, "VCORE SOC"),
+    ("Dynamic VCORE SOC (DVID)", "Setup", TW_VOLT, "Dynamic VCORE SOC(DVID)"),
+    ("Vcore SOC LLC", "Setup", TW_VOLT, "Vcore SOC Loadline Calibration"),
+    ("CPU VDDP (Tweaker)", "Setup", TW_VOLT, "CPU VDDP"),
+    ("CPU VDD18", "Setup", TW_VOLT, "CPU VDD18"),
+    ("AOD VDDP Voltage Control", "AOD_SETUP", AOD, "VDDP Voltage Control", {"op": "ONE_OF"}),
+    ("AOD VDDP [mV]", "AOD_SETUP", AOD, "VDDP Voltage Control", {"op": "NUMERIC"}),
+    ("AOD VDDG Voltage Control", "AOD_SETUP", AOD, "VDDG Voltage Control"),
+    ("AOD Global VDDG CCD [mV]", "AOD_SETUP", AOD, "Global VDDG CCD Voltage Control"),
+    ("AOD Global VDDG IOD [mV]", "AOD_SETUP", AOD, "Global VDDG IOD Voltage Control"),
+    ("AOD SoC/Uncore OC Mode", "AOD_SETUP", AOD, "SoC/Uncore OC Mode"),
+    ("AOD SoC Voltage [mV]", "AOD_SETUP", AOD, "SoC Voltage"),
+    ("CBS SOC OVERCLOCK VID", "AmdSetup", CBS_XFR, "SOC OVERCLOCK VID"),
+    ("CBS VDDP Voltage Control", "AmdSetup", CBS_XFR, "VDDP Voltage Control"),
+    ("CBS VDDG Voltage Control", "AmdSetup", CBS_XFR, "VDDG Voltage Control"),
+    ("DF Cstates (CBS)", "AmdSetup", CBS_SMU, "DF Cstates"),
+    ("APBDIS (CBS)", "AmdSetup", CBS_SMU, "APBDIS"),
+    ("Fixed SOC Pstate (CBS)", "AmdSetup", CBS_SMU, "Fixed SOC Pstate"),
+    ("Global C-state Control (Tweaker)", "Setup", TW_CPU, "Global C-state Control"),
+    ("Power Supply Idle Control (Tweaker)", "Setup", TW_CPU, "Power Supply Idle Control"),
+    ("Global C-state Control (CBS)", "AmdSetup", "AMD CBS > CPU Common Options", "Global C-state Control"),
+    ("Power Supply Idle Control (CBS)", "AmdSetup", "AMD CBS > CPU Common Options", "Power Supply Idle Control"),
+    ("CPPC / Preferred Cores (Tweaker)", "Setup", TW_CPU, "CPPC"),
+    ("IOMMU (CBS)", "AmdSetup", "AMD CBS > NBIO Common Options", "IOMMU"),
+    ("Precision Boost Overdrive (AOD)", "AOD_SETUP", AOD, "Precision Boost Overdrive"),
+    ("PBO Limits (AOD)", "AOD_SETUP", AOD, "PBO Limits"),
+    ("PBO Scalar (AOD)", "AOD_SETUP", AOD, "Precision Boost Overdrive Scalar", {"width": 1}),
+    ("CPU Boost Clock Override (AOD)", "AOD_SETUP", AOD, "CPU Boost Clock Override"),
+    ("Curve Optimizer (AOD)", "AOD_SETUP", AOD_CO, "Curve Optimizer"),
+    ("CO core 0 sign", "AOD_SETUP", AOD_CO, "Core 0 Curve Optimizer Sign"),
+    ("CO core 0 magnitude", "AOD_SETUP", AOD_CO, "Core 0 Curve Optimizer Magnitude"),
+    ("CO core 1 sign", "AOD_SETUP", AOD_CO, "Core 1 Curve Optimizer Sign"),
+    ("CO core 1 magnitude", "AOD_SETUP", AOD_CO, "Core 1 Curve Optimizer Magnitude"),
+    ("CO core 2 sign", "AOD_SETUP", AOD_CO, "Core 2 Curve Optimizer Sign"),
+    ("CO core 2 magnitude", "AOD_SETUP", AOD_CO, "Core 2 Curve Optimizer Magnitude"),
+    ("CO core 3 sign", "AOD_SETUP", AOD_CO, "Core 3 Curve Optimizer Sign"),
+    ("CO core 3 magnitude", "AOD_SETUP", AOD_CO, "Core 3 Curve Optimizer Magnitude"),
+    ("CO core 4 sign", "AOD_SETUP", AOD_CO, "Core 4 Curve Optimizer Sign"),
+    ("CO core 4 magnitude", "AOD_SETUP", AOD_CO, "Core 4 Curve Optimizer Magnitude"),
+    ("CO core 5 sign", "AOD_SETUP", AOD_CO, "Core 5 Curve Optimizer Sign"),
+    ("CO core 5 magnitude", "AOD_SETUP", AOD_CO, "Core 5 Curve Optimizer Magnitude"),
+    ("CO core 6 sign", "AOD_SETUP", AOD_CO, "Core 6 Curve Optimizer Sign"),
+    ("CO core 6 magnitude", "AOD_SETUP", AOD_CO, "Core 6 Curve Optimizer Magnitude"),
+    ("CO core 7 sign", "AOD_SETUP", AOD_CO, "Core 7 Curve Optimizer Sign"),
+    ("CO core 7 magnitude", "AOD_SETUP", AOD_CO, "Core 7 Curve Optimizer Magnitude"),
+    ("CBS Precision Boost Overdrive (XFR)", "AmdSetup", CBS_XFR, "Precision Boost Overdrive"),
+    ("CBS OC Mode", "AmdSetup", "AMD CBS > CPU Common Options > Performance", "OC Mode"),
+    ("Spread Spectrum (Tweaker)", "Setup", TW_FREQ, "Spread Spectrum Control"),
+    ("SVM Mode (Tweaker)", "Setup", TW_CPU, "SVM Mode"),
+    ("Above 4G Decoding", "Setup", "Setup > Peripherals", "Above 4G Decoding"),
+    ("Re-Size BAR", "Setup", "Setup > Peripherals", "Re-Size BAR Support"),
+    ("CSM Support", "Setup", "Setup > BIOS", "CSM Support"),
 ]
 
 FOCUS = [
@@ -739,17 +846,6 @@ FOCUS = [
 ]
 
 
-def row_for(res, store, off):
-    """First question instance at store@off, preferring one that is visible under the current values."""
-    cands = [r for r in res["rows"]
-             if r.get("varstore") == store and r.get("offset") == off and r["op"] not in ("REF", "ACTION")]
-    for want in (True, None, False):
-        for r in cands:
-            if r.get("visible_now") is want:
-                return r
-    return None
-
-
 def build_focus(res):
     rows = res["rows"]
     out = ["## Memory / Infinity Fabric / voltage related settings (focused)\n",
@@ -758,17 +854,15 @@ def build_focus(res):
            "(suppressif evaluated; ? = depends on a boot-time-only variable).\n",
            "### Key settings (what is actually configured)\n",
            "| Item | Store@off | Current | state | IFR default | vis |\n|---|---|---|---|---|---|"]
-    for label, store, off in KEY:
-        r = row_for(res, store, off)
+    for label, store, path, prompt, *want in KEY:
+        r, why = find_row(res, store, path, prompt, **(want[0] if want else {}))
         if not r:
-            out.append(f"| {label} | {store}@{off} | (not found) | | | |")
+            out.append(f"| {label} | {store} | ({why}: {md_escape(path)} :: {md_escape(prompt)}) | | | |")
             continue
         s = res["settings"].get((r["varstore"], r["varstore_guid"], r["offset"], r["width"]), {})
-        vt = s.get("value_text") or r.get("value_text") or ""
-        if store == "Setup" and off in GBT_VOLT:
-            vt = gbt_volt_text(off, r.get("value")) or vt
+        vt = gbt_volt_text(r) or s.get("value_text") or r.get("value_text") or ""
         vis = {True: "Y", False: "hidden", None: "?"}[s.get("visible_now", r.get("visible_now"))]
-        out.append(f"| {label} | {store}@{off} | {fmt(r.get('value'))} {md_escape(vt)} | {r.get('auto_state')} | "
+        out.append(f"| {label} | {store}@{r['offset']} | {fmt(r.get('value'))} {md_escape(vt)} | {r.get('auto_state')} | "
                    f"{fmt(r.get('ifr_default'))} {md_escape(r.get('default_text') or '')} | {vis} |")
     out.append("")
     used = set()
@@ -795,9 +889,7 @@ def build_focus(res):
         out.append("| Page | Setting | Store@off/w | Current | state | IFR default | vis |\n|---|---|---|---|---|---|---|")
         for r in sel:
             s = res["settings"].get((r["varstore"], r["varstore_guid"], r["offset"], r["width"]), {})
-            vt = s.get("value_text") or r.get("value_text") or ""
-            if r["varstore"] == "Setup" and r["offset"] in GBT_VOLT:
-                vt = gbt_volt_text(r["offset"], r.get("value")) or vt
+            vt = gbt_volt_text(r) or s.get("value_text") or r.get("value_text") or ""
             vis = {True: "Y", False: "hidden", None: "?"}[s.get("visible_now", r.get("visible_now"))]
             page = r["form_path"].split(" > ")[-1]
             out.append(f"| {md_escape(page)} | {md_escape(r['prompt'])} | {r['varstore']}@{r['offset']}/{r['width']} | "
@@ -807,74 +899,14 @@ def build_focus(res):
     return "\n".join(out) + "\n"
 
 
-def sanity_checks(res, spec):
+def key_problems(res):
+    """KEY entries that resolve to no question or to several: after a BIOS update, a renamed menu or prompt."""
     out = []
-    for c in spec:
-        r = row_for(res, c["store"], c["offset"])
-        if not r:
-            out.append(dict(check=c["name"], expected=c["expect"], decoded="(question not found)", result="NOT FOUND"))
-            continue
-        v, t = r.get("value"), r.get("value_text")
-        dec = c["conv"](v, t) if "conv" in c else (t if t and not t.isdigit() else v)
-        res_ = c["test"](v, t)
-        if res_ is True:
-            res_ = "MATCH"
-        elif res_ is False:
-            res_ = "MISMATCH"
-        out.append(dict(check=c["name"], where=f"{r['form_path']} :: {r['prompt']} ({r['varstore']}@{r['offset']}/{r['width']})",
-                        expected=c["expect"], decoded=f"{dec} (raw {v})", result=res_, note=c.get("note", "")))
+    for label, store, path, prompt, *want in KEY:
+        r, why = find_row(res, store, path, prompt, **(want[0] if want else {}))
+        if why:
+            out.append(f"{label}: {why} ({store} {path} :: {prompt})")
     return out
-
-
-def _t(name, store, off, expect, test, **kw):
-    return dict(name=name, store=store, offset=off, expect=expect, test=test, **kw)
-
-
-CHECKS = [
-    _t("XMP (Tweaker)", "Setup", 338, "Disabled (manual DDR4-3733)", lambda v, t: t == "Disabled"),
-    _t("Memory speed (Tweaker System Memory Multiplier)", "Setup", 341, "DDR4-3733 (stored x100: 3733)", lambda v, t: v == 3733),
-    _t("Memory Clock Speed (CBS UMC)", "AmdSetup", 213, "1867MHz (= DDR4-3733; code 56 = live MEMCLK ratio 56)",
-       lambda v, t: t == "1867MHz"),
-    _t("FCLK (CBS XFR Enhancement > FCLK Frequency)", "AmdSetup", 338, "1867MHz", lambda v, t: t == "1867MHz"),
-    _t("Memory Timing Mode", "Setup", 345, "Manual (both channels)", lambda v, t: t == "Manual"),
-    _t("tCL (Tweaker)", "Setup", 368, 14, lambda v, t: v == 14),
-    _t("tCL (CBS)", "AmdSetup", 214, 14, lambda v, t: v == 14),
-    _t("tRCDRD (Tweaker)", "Setup", 372, 15, lambda v, t: v == 15),
-    _t("tRCDWR (Tweaker)", "Setup", 374, 15, lambda v, t: v == 15),
-    _t("tRP (Tweaker)", "Setup", 376, 15, lambda v, t: v == 15),
-    _t("tRAS (Tweaker)", "Setup", 378, 36, lambda v, t: v == 36),
-    _t("tRC (Tweaker)", "Setup", 380, 51, lambda v, t: v == 51),
-    _t("tRFC (Tweaker)", "Setup", 394, 288, lambda v, t: v == 288),
-    _t("tRFC (CBS)", "AmdSetup", 237, 288, lambda v, t: v == 288),
-    _t("tRRD_S (Tweaker)", "Setup", 386, 4, lambda v, t: v == 4),
-    _t("tRRD_L (Tweaker)", "Setup", 388, 4, lambda v, t: v == 4),
-    _t("tFAW (Tweaker)", "Setup", 402, 16, lambda v, t: v == 16),
-    _t("tWTR_S (Tweaker)", "Setup", 390, 4, lambda v, t: v == 4),
-    _t("tWTR_L (Tweaker)", "Setup", 392, 12, lambda v, t: v == 12),
-    _t("tWR (Tweaker)", "Setup", 382, 26, lambda v, t: v == 26),
-    _t("tRTP (Tweaker)", "Setup", 400, 14, lambda v, t: v == 14),
-    _t("tCWL (Tweaker)", "Setup", 384, 14, lambda v, t: v == 14),
-    _t("tRDWR (Tweaker)", "Setup", 406, 10, lambda v, t: v == 10),
-    _t("tWRRD (Tweaker)", "Setup", 416, 3, lambda v, t: v == 3),
-    _t("tRDRD_SCL / tWRWR_SCL (Tweaker)", "Setup", 414, "5 / 5", lambda v, t: v == 5),
-    _t("tRDRDDD (Tweaker)", "Setup", 412, 6, lambda v, t: v == 6),
-    _t("tWRWRDD (Tweaker)", "Setup", 422, 7, lambda v, t: v == 7),
-    _t("Gear Down Mode (Tweaker)", "Setup", 354, "Enabled", lambda v, t: t == "Enabled"),
-    _t("Gear Down Mode (CBS)", "AmdSetup", 258, "Enabled", lambda v, t: t == "Enabled"),
-    _t("Command Rate (Tweaker)", "Setup", 353, "1T", lambda v, t: t == "1T"),
-    _t("Power Down (CBS > DRAM Power Options)", "AmdSetup", 259, "Disabled (live UMC register)",
-       lambda v, t: "MATCH" if t == "Disabled" else ("AUTO - resolves to Disabled (live UMC)" if t == "Auto" else False)),
-    _t("VSOC (Tweaker VCORE SOC code)", "Setup", 494, "1.20 V-ish (pm_table 0xB0 SoC set-point)",
-       lambda v, t: "MANUAL, but ~1.14-1.15 V, not 1.20 V (see note)" if v == 64 else False,
-       conv=lambda v, t: gbt_volt_text(494, v),
-       note="pm_table 0xB0 (1.20 V) is the SMU set-point; the board VRM (RAA229004 loop B) is driven by this code"),
-    _t("DRAM Voltage (Tweaker code)", "Setup", 508, "~1.54 V (VTT proxy)",
-       lambda v, t: "MATCH (1.550 V, inferred encoding)" if v == 55 else False, conv=lambda v, t: gbt_volt_text(508, v)),
-    _t("VDDP (AOD, mV)", "AOD_SETUP", 185, "0.90 V (pm_table CLDO_VDDP 0.897)", lambda v, t: v == 900),
-    _t("VDDG CCD (AOD Global, mV)", "AOD_SETUP", 579, "1.00 V (pm_table 0.998)", lambda v, t: v == 1000),
-    _t("VDDG IOD (AOD Global, mV)", "AOD_SETUP", 577, "1.00 V (pm_table 0.998)", lambda v, t: v == 1000),
-    _t("ProcODT (Tweaker)", "Setup", 352, "not known before (Auto or manual?)", lambda v, t: f"decoded: {t}"),
-]
 
 
 def main():
@@ -888,9 +920,9 @@ def main():
                     "variable, used only when evaluating suppressif/grayoutif (repeatable)")
     ARGS = ap.parse_args()
     res = decode(ARGS)
-    checks = sanity_checks(res, CHECKS)
+    problems = key_problems(res)
     focus = build_focus(res)
-    write_outputs(res, ARGS.out, focus, checks)
+    write_outputs(res, ARGS.out, focus, problems)
     # console summary
     n = sum(1 for r in res["rows"] if r.get("varstore"))
     nv = sum(1 for r in res["rows"] if r.get("valid") is True)
@@ -901,8 +933,8 @@ def main():
     for v in res["vs_report"]:
         if v["efivar_size"] is not None and not v["size_match"] and not v.get("variable_length"):
             print("   SIZE MISMATCH", v)
-    for c in checks:
-        print(f"   check {c['check']}: {c['result']} ({c['decoded']})")
+    for p in problems:
+        print(f"   KEY {p}")
     print("wrote", os.path.join(ARGS.out, "bios_settings.json"), os.path.join(ARGS.out, "bios_settings.md"))
 
 

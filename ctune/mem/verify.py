@@ -36,10 +36,11 @@ def _num(v):
 
 def _bios(settings, prompt, menu="Setup > M.I.T.", numeric=False):
     """Value and Auto/MANUAL state of the first matching question. numeric=True skips mode selectors that share
-    the prompt (e.g. 'VDDP Voltage Control' is both the Auto/Manual switch and the mV value)."""
+    the prompt (e.g. 'VDDP Voltage Control' is both the Auto/Manual switch and the mV value). Channel B's timings
+    share the prompts and stay Auto unless Memory Timing Mode is Advanced Manual, so they are skipped."""
     for e in settings:
         for loc in e.get("locations") or []:
-            if loc.startswith(menu) and loc.endswith(f":: {prompt}"):
+            if loc.startswith(menu) and loc.endswith(f":: {prompt}") and "Channel B Memory Sub Timings" not in loc:
                 v = e.get("value_text") if e.get("value_text") is not None else e.get("value")
                 if numeric and _num(v) is None:
                     continue
