@@ -6,6 +6,7 @@ import sys
 from ctune.core import errors as core_errors
 from ctune.core import journal
 from ctune.core import sensors
+from ctune import mascot
 from ctune.core.paths import DATA
 from ctune.cpu import api as cpu
 from ctune.gpu import api as gpu
@@ -14,6 +15,20 @@ from ctune.mem import api as mem
 
 def _out(x):
     print(x if isinstance(x, str) else json.dumps(x, indent=1, default=str))
+
+
+def _banner(st):
+    """Mascot beside a one-glance summary; the error line turns red when this boot has corrected MCEs or Xid errors."""
+    mce = st.get("errors_since_boot") or 0
+    xid = st["gpu"].get("xid_errors_this_boot", 0) if isinstance(st.get("gpu"), dict) else 0
+    errors = bool(mce or xid)
+    counts = f"{mce} corrected MCE · {xid} Xid this boot"
+    return mascot.banner([
+        mascot.TITLE,
+        f"{st.get('board')} · BIOS {st.get('bios')}",
+        mascot.paint(counts, "r") if errors else counts,
+        "see `ctune errors` / `ctune gpu xid`" if errors else "all quiet",
+    ]) + "\n"
 
 
 def build():
@@ -93,6 +108,8 @@ def main(argv=None):
                 st[name] = fn()
             except Exception as e:
                 st[name] = f"unavailable: {e}"
+        if mascot.color_ok(sys.stdout):
+            print(_banner(st))
         _out(st)
     elif a.cmd == "sensors":
         _out(sensors.read())
