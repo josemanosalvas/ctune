@@ -9,7 +9,7 @@ You run a **campaign** in one **domain** (mem, gpu or cpu): a chain of single-va
 - mem: [RAM and fabric rules](reference/mem-zen3-ddr4.md), [test protocol](reference/mem-test-protocol.md)
 - cpu: [Curve Optimizer](reference/cpu-curve-optimizer.md)
 - gpu: [NVIDIA undervolt and overclock](reference/gpu-nvidia.md)
-- all: [machine facts and history](reference/this-machine.md)
+- all: the machine's facts and history in `data/this-machine.md` (local, gitignored). On a new machine, create it from [the template](reference/this-machine.template.md) and fill it in from `status`, the first snapshots and the user; keep it current as campaigns find limits.
 
 ## A step
 

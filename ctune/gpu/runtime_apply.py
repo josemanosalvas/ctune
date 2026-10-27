@@ -3,7 +3,7 @@
 
 `ctune gpu passwordless --install` copies this file, owned by root, to /usr/local/libexec/ctune/gpu-runtime-apply,
 beside the gpu-boot-apply and nvidia_oc copies, and adds a polkit rule that lets one user run exactly that path
-through pkexec without a password (docs/research/reuse-decisions.md).
+through pkexec without a password (docs/design.md section 2).
 
 Any process running as that user can call it, so it takes nothing from the caller but numbers:
 - no path, file or tool argument: nvidia_oc, nvidia-smi and gpu-boot-apply are the root-owned copies at fixed

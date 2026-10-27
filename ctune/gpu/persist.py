@@ -1,6 +1,6 @@
 """Keep signed-off GPU settings across reboots: a root-owned boot unit re-applies them with nvidia_oc.
 
-Policy (docs/research/reuse-decisions.md section 1): only settings that passed `signoff`
+Policy (docs/design.md section 1): only settings that passed `signoff`
 persist. Experiments stay runtime-only and a reboot clears them. persist() refuses unless:
 - ctune applied settings this boot, and NVML reads back the same offsets and power limit;
 - the latest sign-off run with exactly these settings and a full-length gpu phase was green, on this GPU and
