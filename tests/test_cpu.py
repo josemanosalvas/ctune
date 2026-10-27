@@ -10,10 +10,13 @@ import struct
 import sys
 import tempfile
 import unittest
+from unittest import mock
 
 sys.dont_write_bytecode = True
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, REPO)
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import guard  # noqa: E402,F401  (offline tests may not start podman, root helpers or stress tools)
 _DATA = tempfile.mkdtemp(prefix="ctune-test-data-")
 os.environ["CTUNE_DATA"] = _DATA
 
@@ -371,7 +374,8 @@ class CrashMarker(unittest.TestCase):
         self.assertEqual(rec["kind"], "note")
         self.assertNotIn("verdict", rec)
 
-    def test_nested_run_reports_into_outer_marker(self):
+    @mock.patch.object(stress, "active_units", return_value=[])   # a real detached test may run beside the suite
+    def test_nested_run_reports_into_outer_marker(self, _):
         with stress.run("signoff", "signoff") as outer:
             outer.update(phase="cpu")
             with stress.run("cpu", "co-cycle") as inner:

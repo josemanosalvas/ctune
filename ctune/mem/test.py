@@ -34,8 +34,7 @@ def _gpu_heat(seconds):
         return None, f"GPU unavailable: {e}"
     if short:
         return None, short
-    return stress.Load("gpu-heat (memtest_vulkan)", ["timeout", "-s", "INT", str(seconds + 300)] + gpu.vram_cmd(),
-                       gpu.parse_vram, cwd=os.path.dirname(gpu.MEMTEST), optional=True), None
+    return gpu.VramLoad("gpu-heat (memtest_vulkan)", seconds + 300, optional=True), None
 
 
 def ram_loads(seconds, mb, gpu_heat=True, disk=False):

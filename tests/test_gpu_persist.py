@@ -16,15 +16,19 @@ from unittest import mock
 
 sys.dont_write_bytecode = True
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import guard  # noqa: E402,F401  (offline tests may not start podman, root helpers or stress tools)
 os.environ.setdefault("CTUNE_DATA", tempfile.mkdtemp(prefix="ctune-test-data-"))
 
 from ctune.gpu import boot_apply, install, persist  # noqa: E402
+from ctune.core.signoff import MINUTES  # noqa: E402
 
 IDENT = {"gpu_uuid": "GPU-fa9f0f08", "driver": "615.78.08"}
 UV = {"core_offset": 150, "mem_offset": 0, "max_clock": 1860, "power_limit": 400.0}
 
 
-def signoff(gpu, verdict="green", ident=IDENT, ts="2026-11-01T10:00:00+0100", phases=("ram", "gpu"), gpu_min=75):
+def signoff(gpu, verdict="green", ident=IDENT, ts="2026-11-01T10:00:00+0100", phases=("ram", "gpu"),
+            gpu_min=MINUTES["gpu"]):
     return {"kind": "result", "domain": "signoff", "ts": ts, "verdict": verdict, "phases": list(phases),
             "minutes": {p: (gpu_min if p == "gpu" else 60) for p in phases},
             "settings": {"gpu": dict(gpu, boot_id="b", ts=ts), "gpu_identity": ident}}

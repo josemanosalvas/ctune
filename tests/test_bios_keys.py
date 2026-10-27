@@ -14,6 +14,8 @@ import unittest
 sys.dont_write_bytecode = True
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import guard  # noqa: E402,F401  (offline tests may not start podman, root helpers or stress tools)
 
 from ctune.mem import verify  # noqa: E402
 

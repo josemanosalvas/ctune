@@ -73,7 +73,10 @@ Settings checked against the systemd 259.9 man pages and probe units on this mac
   - cuda_memtest and memtest_vulkan test VRAM only.
   - Unigine and FurMark do not check results.
   - Games, ray tracing especially, remain the final check, because gpu-burn never touches the RT cores, ROPs or TMUs.
-- **Open.**
-  - Whether FP32 at the 400 W limit reaches the locked clock, or the power cap holds it below. `at_lock_share` measures this.
-  - Whether FP64 (1/64 rate on GA102) holds the clock at the lock.
-  - Tune the core with the memory offset at 0, because gpu-burn's result buffers sit in VRAM.
+- **Measured on 2026-10-27** at the 400 W limit:
+  - FP32 never reaches the lock: stock 1682 MHz at 397 W, `at_lock_share` 0 to 0.03 at a 1905 MHz lock.
+  - FP64 (1/64 rate on GA102) holds the lock below the cap: 1905 MHz at 153 W, `at_lock_share` 1.0.
+  - Tensor cores (`-tc`: FP32 GEMM on FP16 tensor cores, cuBLAS `CUBLAS_TENSOR_OP_MATH`) also sit at the cap: 62.6 TFLOPS at 1772 MHz and 380 W, with a 1905 lock and +70.
+- **Pausing for load transients.** The container is frozen with `podman pause` (the cgroup freezer). Rootless on this machine it takes about 25 ms, and a signal sent while frozen arrives right after the thaw. A worker keeps two batches in flight (`gpu_burn-drv.cpp` L353-367), so the GPU idles only after both finish. At 8 GiB an FP32 batch takes about 1.2 s, so the transient run uses 1 GiB: two compared slots, about 0.1 s per batch. Measured at 5 Hz: in each 1 s pause the GPU fell to 2 % utilisation and about 120 W instantaneous with the clock at the lock, and each thaw stepped back to about 400 W at that clock.
+- **Name clashes.** ctune once ran gpu-burn with `--replace`. A run from a scratch data directory then replaced the campaign's running container (2026-10-27). Runs now refuse to start beside a running `ctune-gpu-burn`, and every later podman call names the run's container ID (`--cidfile`).
+- Tune the core with the memory offset at 0, because gpu-burn's result buffers sit in VRAM.

@@ -263,6 +263,19 @@ def _inhibit_sleep(why):
             for c in cmds if shutil.which(c[0])]
 
 
+def active_units():
+    """Detached ctune tests running now, whatever data directory they use. [] when the user manager cannot be asked."""
+    if os.geteuid() == 0:
+        return []
+    try:
+        r = subprocess.run(["systemctl", "--user", "list-units", "ctune-run-*", "--plain", "--no-legend",
+                            "--state=activating,active,deactivating"], capture_output=True, text=True, timeout=15,
+                           env=user_env())
+    except (OSError, subprocess.SubprocessError):
+        return []
+    return [l.split()[0] for l in r.stdout.splitlines() if l.strip()]
+
+
 @contextmanager
 def run(domain, test, settings=None):
     """Marker for one test. Nested inside another test, it reports into the outer marker."""
@@ -270,6 +283,10 @@ def run(domain, test, settings=None):
         busy = running()
         if busy and busy.get("pid") != os.getpid():
             raise RuntimeError(f"a {busy.get('test')} test is already running (pid {busy.get('pid')})")
+        # an inline test with another CTUNE_DATA cannot see a detached test's marker (runner.start checks units)
+        others = [] if os.environ.get("CTUNE_UNIT") else active_units()
+        if others:
+            raise RuntimeError(f"a detached test is already running: {', '.join(others)}")
     r = _Run(domain, test, settings, parent=_ACTIVE[-1] if _ACTIVE else None)
     _ACTIVE.append(r)
     holders = _inhibit_sleep(f"{domain} {test} test running") if r.parent is None else []

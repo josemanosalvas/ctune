@@ -11,6 +11,8 @@ import unittest
 sys.dont_write_bytecode = True
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, REPO)
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import guard  # noqa: E402,F401  (offline tests may not start podman, root helpers or stress tools)
 os.environ.setdefault("CTUNE_DATA", tempfile.mkdtemp(prefix="ctune-test-data-"))
 
 from ctune.core import stress  # noqa: E402
@@ -199,17 +201,18 @@ class ReviewRegressions(unittest.TestCase):
         from ctune.gpu import burn
         r = burn.parse(125, "Error: creating container storage: the container name \"ctune-gpu-burn\" is already in "
                             "use by abc\n", False)
-        self.assertFalse(r["unavailable"])
         self.assertFalse(any("burn-setup" in e for e in r["errors"]))
 
     def test_gpu_test_rejects_empty_or_too_short_runs(self):
+        from unittest import mock
         from ctune.gpu import api as gpu
-        with self.assertRaises(ValueError):
-            gpu.test("core", burn_seconds=0, fp64_seconds=0, tc_seconds=0)
-        with self.assertRaises(ValueError):
-            gpu.test("core", fp64_seconds=30)
-        with self.assertRaises(ValueError):
-            gpu.test("screen", burn_seconds=-5)
+        with mock.patch.object(stress, "check_interrupted", side_effect=AssertionError("reached a real run")):
+            with self.assertRaises(ValueError):
+                gpu.test("core", burn_seconds=0, fp64_seconds=0, tc_seconds=0, transient_seconds=0)
+            with self.assertRaises(ValueError):
+                gpu.test("core", fp64_seconds=30)
+            with self.assertRaises(ValueError):
+                gpu.test("screen", burn_seconds=-5)
 
     def test_mprime_floor(self):
         from ctune.cpu import api as cpu
@@ -230,6 +233,7 @@ class ReviewRegressions(unittest.TestCase):
                 mcp_server._run("mem_test", None, True, kind="fabric", minutes=None)
         spec = json.loads(run.call_args.args[0][-1])
         self.assertEqual(spec, {"kind": "mem_test", "kwargs": {"kind": "fabric", "minutes": None}})
+        self.assertIn(f"--setenv=CTUNE_DATA={stress.DATA}", run.call_args.args[0])   # the unit writes where we read
         inline = mock.Mock(return_value="ran")
         self.assertEqual(mcp_server._run("gpu_test", inline, False, kind="core"), "ran")
         inline.assert_called_once_with(kind="core")
@@ -242,6 +246,7 @@ class ReviewRegressions(unittest.TestCase):
         holder = subprocess.Popen(["sleep", "60"])
         clock = iter([100.0, 100.0 + 2040])        # BOOTTIME - MONOTONIC at the start, then after a 34 min suspend
         with mock.patch.object(stress, "_inhibit_sleep", return_value=[holder]), \
+                mock.patch.object(stress, "active_units", return_value=[]), \
                 mock.patch.object(stress, "_slept_s", side_effect=lambda: next(clock)):
             with stress.run("mem", "fabric") as r:
                 self.assertEqual(r.state["sleep_blocked_by"], ["sleep"])

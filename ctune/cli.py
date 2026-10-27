@@ -82,16 +82,21 @@ def build():
     s.add_argument("--max-clock", type=int, help="lock the core clock to 0..MHZ")
     s.add_argument("--power-limit", type=float, help="watts")
     g.add_parser("reset", help="offsets 0, unlock clocks, default power limit")
-    s = g.add_parser("test", help="core (gpu-burn, results checked), vram (memtest_vulkan), screen (both), vkpeak")
-    s.add_argument("kind", nargs="?", default="screen", choices=["core", "vram", "screen", "vkpeak"])
-    s.add_argument("--burn-seconds", type=int, default=600, help="gpu-burn FP32 (results checked)")
-    s.add_argument("--fp64-seconds", type=int, default=300, help="gpu-burn FP64 (at least 90 s): low power, expected to sit at the locked clock")
-    s.add_argument("--tc-seconds", type=int, default=0, help="gpu-burn on the tensor cores")
-    s.add_argument("--vram-seconds", type=int, default=300)
-    s.add_argument("--core-runs", type=int, default=3, help="vkpeak runs (kind vkpeak)")
+    s = g.add_parser("test", help="core (gpu-burn, results checked), graphics (Quake II RTX), vram (memtest_vulkan), "
+                                  "screen (all three), vkpeak; the defaults are gpu.test's")
+    s.add_argument("kind", nargs="?", default=argparse.SUPPRESS, choices=list(gpu.KINDS))
+    for flag, what in (("--burn-seconds", "gpu-burn FP32 (results checked)"),
+                       ("--fp64-seconds", "gpu-burn FP64 (at least 90 s): low power, expected to sit at the locked clock"),
+                       ("--tc-seconds", "gpu-burn on the tensor cores"),
+                       ("--transient-seconds", "gpu-burn FP32 frozen 1 s in every 10: load transients"),
+                       ("--graphics-seconds", "Quake II RTX timedemo passes: RT cores; crashes and hangs only"),
+                       ("--vram-seconds", "memtest_vulkan"), ("--core-runs", "vkpeak runs (kind vkpeak)")):
+        s.add_argument(flag, type=int, default=argparse.SUPPRESS, help=what + "; 0 skips it")
     s.add_argument("--detach", action="store_true")
-    s.add_argument("--note", default="")
+    s.add_argument("--note", default=argparse.SUPPRESS)
     g.add_parser("burn-setup", help="build the gpu-burn image (podman, pinned commit, about 4 GB download once)")
+    g.add_parser("q2rtx-setup", help="download Quake II RTX and the Steam Linux Runtime it runs in (about 1.3 GB "
+                                     "once, SHA256 pinned)")
     s = g.add_parser("persist", help="re-apply the settings applied now at every boot, if a green sign-off covers "
                                      "them (root via pkexec)")
     s.add_argument("--dry-run", action="store_true", help="show the config or the reasons it is refused")
@@ -122,7 +127,7 @@ def build():
     s.add_argument("--detach", action="store_true")
     s.add_argument("--note", default="")
 
-    s = sub.add_parser("signoff", help="multi-hour suite: ram, ycruncher, cpu, cpu_heavy, gpu, combined, idle (about 5 h)")
+    s = sub.add_parser("signoff", help="multi-hour suite: ram, ycruncher, cpu, cpu_heavy, gpu, combined, idle (about 5 h 30 min)")
     s.add_argument("--phases", help=f"comma-separated subset of {','.join(signoff.PHASES)}")
     s.add_argument("--minutes", help="per-phase overrides, e.g. ram=120,idle=60")
     s.add_argument("--keep-going", action="store_true", help="run every phase even after a red one")
@@ -201,12 +206,14 @@ def main(argv=None):
         elif a.gcmd == "reset":
             _out(gpu.reset())
         elif a.gcmd == "test":
-            kw = {"kind": a.kind, "burn_seconds": a.burn_seconds, "fp64_seconds": a.fp64_seconds,
-                  "tc_seconds": a.tc_seconds, "vram_seconds": a.vram_seconds, "core_runs": a.core_runs, "note": a.note}
+            kw = {k: v for k, v in vars(a).items() if k not in ("cmd", "gcmd", "detach")}
             _out(runner.start("gpu_test", **kw) if a.detach else gpu.test(**kw))
         elif a.gcmd == "burn-setup":
             from ctune.gpu import burn
             _out(burn.setup())
+        elif a.gcmd == "q2rtx-setup":
+            from ctune.gpu import q2rtx
+            _out(q2rtx.setup())
         elif a.gcmd == "xid":
             _out(gpu.xid_errors(a.since))
         elif a.gcmd in ("persist", "unpersist", "persist-setup", "persist-selftest"):

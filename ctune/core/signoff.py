@@ -5,7 +5,8 @@ Phases, in order (minutes are defaults):
   ycruncher 45  y-cruncher stress, all tests on all threads with most of the free RAM (AVX2, IMC, VRM load)
   cpu       50  mprime SSE Huge FFTs, one thread per core in random order, suspended 1 s in 10 (Curve Optimizer)
   cpu_heavy 25  mprime AVX2 1344K, the heavy-load counterpart
-  gpu       75  gpu-burn FP32 60 %, tensor cores 13 %, FP64 13 % (results checked), memtest_vulkan 13 %
+  gpu       90  gpu-burn FP32 35 %, FP64 12 %, tensor cores 10 %, FP32 frozen 1 s in 10 13 % (results
+              checked), Quake II RTX 20 % (RT cores; crashes and hangs only), memtest_vulkan 10 %
   combined  30  stressapptest + memtest_vulkan + NVMe reads at once (fabric and PCIe)
   idle      30  nothing running; an unstable fabric or Curve Optimizer often freezes or reboots here
 
@@ -19,7 +20,10 @@ from ctune.core import journal, stress
 from ctune.core.paths import DATA
 
 PHASES = ("ram", "ycruncher", "cpu", "cpu_heavy", "gpu", "combined", "idle")
-MINUTES = {"ram": 60, "ycruncher": 45, "cpu": 50, "cpu_heavy": 25, "gpu": 75, "combined": 30, "idle": 30}
+MINUTES = {"ram": 60, "ycruncher": 45, "cpu": 50, "cpu_heavy": 25, "gpu": 90, "combined": 30, "idle": 30}
+# gpu phase: gpu.test argument -> (share of the phase, floor in s)
+GPU_SHARES = {"burn_seconds": (0.35, 60), "fp64_seconds": (0.12, 90), "tc_seconds": (0.10, 30),
+              "transient_seconds": (0.13, 60), "graphics_seconds": (0.20, 60), "vram_seconds": (0.10, 60)}
 
 
 def _settings():
@@ -91,9 +95,8 @@ def _phase(name, minutes, mb_cap=None):
     if name == "gpu":
         from ctune.gpu import api as gpu
         snap = stress.error_snapshot()
-        r = gpu.test("screen", burn_seconds=max(60, int(seconds * 0.60)), tc_seconds=max(30, int(seconds * 0.13)),
-                     fp64_seconds=max(90, int(seconds * 0.13)), vram_seconds=max(60, int(seconds * 0.13)),
-                     record=False)
+        r = gpu.test("screen", record=False, **{k: max(floor, int(seconds * share))
+                                                for k, (share, floor) in GPU_SHARES.items()})
         r["errors"] = stress.error_delta(snap)
         r["ok"] = r["verdict"] == "green" and r["errors"]["clean"]
         r["inconclusive"] = r["verdict"] == "inconclusive" and r["errors"]["clean"]
