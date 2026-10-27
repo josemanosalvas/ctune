@@ -385,20 +385,31 @@ def _burn(mode, seconds, h, mark=None):
     if mb < burn.MIN_MB[mode]:   # the test cannot run: inconclusive, not red
         return {"ok": False, "unavailable": True, "mode": mode,
                 "errors": [f"only {free} MiB of VRAM free; gpu-burn {mode} needs {burn.MIN_MB[mode] + 1024}"]}
-    cidfile = os.path.join(tempfile.mkdtemp(prefix="ctune-gpu-burn-"), "cid")
-    ld = stress.Load(f"gpu-burn {mode}", burn.cmd(mode, seconds, mb, cidfile), burn.parse, self_timed=True)
-    pauser = burn.Pauser(ld, seconds, cidfile, mark=mark) if mode == "transient" else None
-
-    try:
-        if pauser:
-            pauser.start()
-        r = stress.run_loads([ld], seconds + 15, on_tick=lambda: _temp_guard(h))   # + gpu-burn's -stts and start-up
-    finally:
-        if pauser:
-            pauser.stop.set()
-            pauser.join(100)   # longer than its podman calls can take (3 x 30 s), so it never tags the next part
-        burn.cleanup(cidfile)
-    out = {**r["loads"][0], "mode": mode, "seconds": seconds, "mb": mb}
+    # NVML's free VRAM is not always one allocatable block, so gpu-burn's start-up allocation can fail with VRAM to
+    # spare. A start-up out-of-memory retries 512 MB smaller; the score does not depend on the buffer size (it sets
+    # how many result matrices gpu-burn keeps, not the work per matrix).
+    retries = []
+    while True:
+        cidfile = os.path.join(tempfile.mkdtemp(prefix="ctune-gpu-burn-"), "cid")
+        ld = stress.Load(f"gpu-burn {mode}", burn.cmd(mode, seconds, mb, cidfile), burn.parse, self_timed=True)
+        pauser = burn.Pauser(ld, seconds, cidfile, mark=mark) if mode == "transient" else None
+        try:
+            if pauser:
+                pauser.start()
+            r = stress.run_loads([ld], seconds + 15, on_tick=lambda: _temp_guard(h))   # + gpu-burn's -stts and start-up
+        finally:
+            if pauser:
+                pauser.stop.set()
+                pauser.join(100)   # longer than its podman calls can take (3 x 30 s), so it never tags the next part
+            burn.cleanup(cidfile)
+        out = {**r["loads"][0], "mode": mode, "seconds": seconds, "mb": mb}
+        oom = any("out of memory" in e for e in out.get("errors", [])) and not out.get("gflops_median")
+        if not oom or len(retries) >= 2 or mb - 512 < burn.MIN_MB[mode]:
+            break
+        retries.append({"mb": mb, "error": next(e for e in out["errors"] if "out of memory" in e)})
+        mb -= 512
+    if retries:
+        out["alloc_retries"] = retries
     if r["early_exit"] and r["early_exit"] != ld.name:   # a guardrail stopped it: red, whatever the pauser did
         out["ok"] = False
         out["errors"].append(r["early_exit"])

@@ -255,6 +255,23 @@ class ReviewRegressions(unittest.TestCase):
         self.assertEqual(note["slept_s"], 2040)
         self.assertIn("inconclusive", note["text"])
 
+    def test_gpu_burn_retries_smaller_after_a_startup_out_of_memory(self):
+        """NVML's free VRAM is not one allocatable block: a start-up out-of-memory retries 512 MB smaller."""
+        from unittest import mock
+        from ctune.gpu import api as gpu
+        oom = {"ok": False, "errors": ["Couldn't init a GPU test: Error in C alloc (gpu_burn-drv.cpp:200): out of "
+                                       "memory"], "gflops_median": None, "name": "gpu-burn fp32"}
+        ok = {"ok": True, "errors": [], "gflops_median": 26400.0, "name": "gpu-burn fp32"}
+        runs = [{"loads": [oom], "early_exit": "gpu-burn fp32"}, {"loads": [ok], "early_exit": None}]
+        with mock.patch.object(gpu.nvml, "memory_mb", return_value=(12288, 10400, 1888)), \
+                mock.patch.object(gpu.stress, "run_loads", side_effect=runs) as run, \
+                mock.patch.object(gpu.burn, "cleanup"):
+            out = gpu._burn("fp32", 600, None)
+        self.assertTrue(out["ok"])
+        self.assertEqual(out["mb"], 7680)
+        self.assertEqual(out["alloc_retries"][0]["mb"], 8192)
+        self.assertIn("-m", run.call_args_list[1].args[0][0].cmd)
+
     def test_vram_failure_keeps_memtest_vulkans_output(self):
         from ctune.gpu import api as gpu
         r = gpu.parse_vram(68, "Standard 5-minute test of 1: RTX 3080 Ti\nvkAllocateMemory: out of host memory\n")
