@@ -7,6 +7,7 @@ the next ctune call in a new boot finds a marker from another boot and records t
 import json
 import os
 import re
+import shutil
 import signal
 import statistics
 import subprocess
@@ -245,6 +246,23 @@ class _Run:
 _ACTIVE = []
 
 
+def _slept_s():
+    """Seconds this boot has spent suspended: CLOCK_BOOTTIME counts them, CLOCK_MONOTONIC does not."""
+    return time.clock_gettime(time.CLOCK_BOOTTIME) - time.monotonic()
+
+
+def _inhibit_sleep(why):
+    """Holders that block suspend while a test runs. A suspend pauses the loads while their timers keep counting: on
+    2026-10-27 a 90 min RAM test slept 34 min of it. logind's lock covers sleep requests in general; GNOME's idle
+    suspend asks only its own session, so it gets a session lock too."""
+    cmds = [["systemd-inhibit", "--what=sleep", "--who=ctune", f"--why={why}", "--mode=block"]]
+    if "GNOME" in os.environ.get("XDG_CURRENT_DESKTOP", "") and os.environ.get("DBUS_SESSION_BUS_ADDRESS"):
+        cmds.append(["gnome-session-inhibit", "--inhibit", "suspend", "--app-id", "ctune", "--reason", why])
+    return [subprocess.Popen(c + ["sleep", "infinity"], stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+                             stderr=subprocess.DEVNULL, start_new_session=True, env=user_env())
+            for c in cmds if shutil.which(c[0])]
+
+
 @contextmanager
 def run(domain, test, settings=None):
     """Marker for one test. Nested inside another test, it reports into the outer marker."""
@@ -254,12 +272,24 @@ def run(domain, test, settings=None):
             raise RuntimeError(f"a {busy.get('test')} test is already running (pid {busy.get('pid')})")
     r = _Run(domain, test, settings, parent=_ACTIVE[-1] if _ACTIVE else None)
     _ACTIVE.append(r)
+    holders = _inhibit_sleep(f"{domain} {test} test running") if r.parent is None else []
+    slept0 = _slept_s()
+    if holders:
+        time.sleep(0.3)   # a holder that cannot take its lock exits at once
     try:
-        r.update(phase="start")
+        r.update(phase="start", sleep_blocked_by=[p.args[0] for p in holders if p.poll() is None] or None)
         yield r
     finally:
         _ACTIVE.pop()
         if r.parent is None:
+            for p in holders:
+                p.terminate()
+                p.wait(10)
+            slept = round(_slept_s() - slept0)
+            if slept > 5:
+                journal.add(DATA, "note", domain=domain, slept_s=slept, started=r.state["started"],
+                            text=f"the machine was suspended for {slept} s during the {domain} {test} test that "
+                                 f"started at {r.state['started']}: its result is inconclusive; run it again")
             try:
                 os.remove(MARKER)
             except OSError:
@@ -333,7 +363,7 @@ class Load:
         return self
 
     def _read(self):
-        chunks = []
+        self._chunks = chunks = []           # result() reads them even if a helper still holds the pipe open
         for line in self.proc.stdout:
             chunks.append(line)
             if len(chunks) > 20000:          # keep the head (setup) and the tail (results)
@@ -372,7 +402,7 @@ class Load:
             return {"ok": False, "errors": ["not started"]}
         self.proc.wait()
         self._reader.join(10)
-        r = self.parse(self.proc.returncode, self.out, self.stopped)
+        r = self.parse(self.proc.returncode, self.out or "".join(getattr(self, "_chunks", [])), self.stopped)
         r["name"] = self.name
         return r
 

@@ -47,7 +47,7 @@ def units():
     return out
 
 
-def start(kind, **kwargs):
+def start(kind, /, **kwargs):   # positional-only: mem_test and gpu_test take a `kind` of their own
     if os.geteuid() == 0:
         raise RuntimeError("run ctune tests as the user: systemd-run --user would target root's manager")
     stress.check_interrupted()

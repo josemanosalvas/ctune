@@ -152,8 +152,8 @@ def parse_vram(rc, out, stopped=True):
     errs = [l for l in lines if re.search(r"error|mismatch|fail", l, re.I) and "Passed" not in l]
     unavailable = not passes and not errs
     if unavailable:
-        errs.append(f"memtest_vulkan exited {rc} without a pass: it could not allocate its VRAM buffer "
-                    "(another app holding VRAM?)")
+        tail = " | ".join(l.strip() for l in lines[-6:] if l.strip()) or "no output"
+        errs.append(f"memtest_vulkan exited {rc} without a pass (VRAM held by another app?); its output: {tail}")
     bw = [float(m.group(1)) for l in passes[2:] if (m := re.search(r"checked:.*?([\d.]+)GB/sec", l))]
     return {"passes_reported": len(passes), "errors": errs[:20], "unavailable": unavailable,
             "checked_gbps_avg": round(sum(bw) / len(bw), 1) if bw else None, "ok": bool(passes) and not errs}

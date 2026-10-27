@@ -29,7 +29,7 @@ INSTRUCTIONS = (
 )
 
 
-def _run(kind, fn, detach, **kw):
+def _run(kind, fn, detach, /, **kw):
     """Long tests run detached (poll test_status); short ones can run inline."""
     return runner.start(kind, **kw) if detach else fn(**kw)
 

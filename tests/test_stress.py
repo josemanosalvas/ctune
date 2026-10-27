@@ -215,3 +215,43 @@ class ReviewRegressions(unittest.TestCase):
         from ctune.cpu import api as cpu
         with self.assertRaises(ValueError):
             cpu.test([0], seconds_per_core=30, workload="sse-huge")
+
+    def test_detached_start_passes_the_tests_own_kind(self):
+        """mem_test and gpu_test take a `kind` that collided with the runner's own (2026-10-27)."""
+        import json
+        from unittest import mock
+        from ctune import mcp_server
+        from ctune.core import runner
+        failed = mock.Mock(returncode=1, stderr="stubbed")
+        with mock.patch.object(stress, "check_interrupted"), mock.patch.object(stress, "running", return_value=None), \
+                mock.patch.object(runner, "units", return_value=[]), \
+                mock.patch.object(runner.subprocess, "run", return_value=failed) as run:
+            with self.assertRaisesRegex(RuntimeError, "systemd-run failed"):
+                mcp_server._run("mem_test", None, True, kind="fabric", minutes=None)
+        spec = json.loads(run.call_args.args[0][-1])
+        self.assertEqual(spec, {"kind": "mem_test", "kwargs": {"kind": "fabric", "minutes": None}})
+        inline = mock.Mock(return_value="ran")
+        self.assertEqual(mcp_server._run("gpu_test", inline, False, kind="core"), "ran")
+        inline.assert_called_once_with(kind="core")
+
+    def test_a_test_blocks_sleep_and_flags_one_that_happens_anyway(self):
+        """A 90 min RAM test slept 34 min of it and still reported green (2026-10-27)."""
+        import subprocess
+        from unittest import mock
+        from ctune.core import journal
+        holder = subprocess.Popen(["sleep", "60"])
+        clock = iter([100.0, 100.0 + 2040])        # BOOTTIME - MONOTONIC at the start, then after a 34 min suspend
+        with mock.patch.object(stress, "_inhibit_sleep", return_value=[holder]), \
+                mock.patch.object(stress, "_slept_s", side_effect=lambda: next(clock)):
+            with stress.run("mem", "fabric") as r:
+                self.assertEqual(r.state["sleep_blocked_by"], ["sleep"])
+        self.assertIsNotNone(holder.poll())      # the lock is released with the test
+        note = journal.tail(stress.DATA, 1, "note")[-1]
+        self.assertEqual(note["slept_s"], 2040)
+        self.assertIn("inconclusive", note["text"])
+
+    def test_vram_failure_keeps_memtest_vulkans_output(self):
+        from ctune.gpu import api as gpu
+        r = gpu.parse_vram(68, "Standard 5-minute test of 1: RTX 3080 Ti\nvkAllocateMemory: out of host memory\n")
+        self.assertTrue(r["unavailable"])
+        self.assertIn("out of host memory", r["errors"][0])
