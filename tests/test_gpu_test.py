@@ -301,12 +301,21 @@ class VramAllocation(unittest.TestCase):
         self.assertEqual(r["alloc_retries"], [{"budget_mb": 10369, "rc": 68}, {"budget_mb": 10369 - 1024, "rc": 68}])
         self.assertEqual(r["checked_gbps_avg"], 799.2)
 
-    def test_three_failed_allocations_are_inconclusive_with_a_clear_reason(self):
+    def test_retries_go_down_to_the_minimum_then_it_is_inconclusive(self):
         r = self.load(limit_mb=1000)
         self.assertFalse(r["ok"])
         self.assertTrue(r["unavailable"])
-        self.assertEqual(len(r["alloc_retries"]), gpu.VRAM_TRIES)
+        budgets = [a["budget_mb"] for a in r["alloc_retries"]]
+        self.assertEqual(budgets[0], 10369)
+        self.assertGreaterEqual(budgets[-1], gpu.VRAM_MIN_MB)
+        self.assertLess(budgets[-1] - gpu.VRAM_STEP_MB, gpu.VRAM_MIN_MB)
         self.assertIn("could not allocate", r["errors"][0])
+
+    def test_a_fragmented_7_gb_block_is_found_from_10_gb(self):
+        r = self.load(limit_mb=7300)
+        self.assertTrue(r["ok"], r)
+        self.assertEqual(r["budget_mb"], 10369 - 3 * 1024)
+        self.assertEqual(len(r["alloc_retries"]), 3)
 
     def test_another_exit_68_is_not_retried(self):
         r = self.load(limit_mb=99999, NODEV="1")
