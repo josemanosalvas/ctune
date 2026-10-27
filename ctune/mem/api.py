@@ -51,13 +51,16 @@ def resolve(name):
 
 
 def snapshot(label="", skip_devmem=False):
-    """Take a full snapshot (needs root: re-runs itself through pkexec, which shows a password prompt)."""
-    script = os.path.join(_platform_dir(), "ram_snapshot.py")
-    cmd = [sys.executable, "-I", "-B", script, "--out", SNAPS, "--label", label, "--owner", f"{os.getuid()}:{os.getgid()}"]
+    """Take a full snapshot. Its root reads go through the root-owned collector with no prompt once `ctune
+    passwordless` is installed; otherwise the whole script re-runs through pkexec, which shows a password prompt."""
+    plat = _platform_dir()
+    script = os.path.join(plat, "ram_snapshot.py")
+    collector = os.path.join("/usr/local/libexec/ctune/mem", os.path.basename(plat), "collect_root.py")
+    cmd = [sys.executable, "-I", "-B", script, "--out", SNAPS, "--label", label]
     if skip_devmem:
         cmd.append("--skip-devmem")
-    if os.geteuid() != 0:
-        cmd = ["pkexec"] + cmd
+    if os.geteuid() != 0 and not os.path.isfile(collector):
+        cmd = ["pkexec"] + cmd + ["--owner", f"{os.getuid()}:{os.getgid()}"]
     r = subprocess.run(cmd, capture_output=True, text=True, timeout=900)
     if r.returncode != 0:
         raise RuntimeError(f"snapshot failed ({r.returncode}): {r.stderr.strip()[-800:]}")

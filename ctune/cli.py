@@ -127,6 +127,9 @@ def build():
     s.add_argument("--detach", action="store_true")
     s.add_argument("--note", default="")
 
+    s = sub.add_parser("passwordless", help="let GPU apply/reset, CPU probe/apply/reset and RAM snapshots run without a "
+                                            "password: root-owned helpers plus a polkit rule for this user (one prompt)")
+    s.add_argument("--remove", action="store_true")
     s = sub.add_parser("signoff", help="multi-hour suite: ram, ycruncher, cpu, cpu_heavy, gpu, combined, idle (about 5 h 30 min)")
     s.add_argument("--phases", help=f"comma-separated subset of {','.join(signoff.PHASES)}")
     s.add_argument("--minutes", help="per-phase overrides, e.g. ram=120,idle=60")
@@ -234,6 +237,9 @@ def main(argv=None):
             kw = {"cores": cores, "seconds_per_core": a.seconds_per_core, "order": a.order, "note": a.note,
                   "workload": a.workload, "full_cycle": a.full_cycle}
             _out(runner.start("cpu_test", **kw) if a.detach else cpu.test(**kw))
+    elif a.cmd == "passwordless":
+        from ctune.gpu import persist
+        _out(persist.passwordless(a.remove))
     elif a.cmd == "signoff":
         kw = {"phases": a.phases.split(",") if a.phases else None, "keep_going": a.keep_going, "note": a.note,
               "mb": a.mb,

@@ -9,6 +9,7 @@ import contextlib
 import io
 import json
 import os
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -86,6 +87,8 @@ a = sys.argv[1:]
 open("{d}/calls", "a").write("smi " + " ".join(a) + "\\n")
 if "-pl" in a:
     open("{d}/pl", "w").write(a[a.index("-pl") + 1])
+elif "--query-gpu=power.min_limit" in a:
+    print("100.00")
 elif "-rgc" not in a:
     print("GPU-fa9f0f08, {driver}, " + open("{d}/pl").read().strip() + ", 400.00")
 """
@@ -115,7 +118,9 @@ print(open(p).read() if os.path.exists(p) else "[    1.0] Linux version")
 """
 
 
-class BootApply(unittest.TestCase):
+class FakeGpu:
+    """Fake nvidia-smi, nvidia_oc and dmesg commands in a temp dir."""
+
     def setUp(self):
         self.d = tempfile.mkdtemp(prefix="ctune-bootapply-")
         self.cfg = os.path.join(self.d, "gpu.json")
@@ -167,6 +172,8 @@ class BootApply(unittest.TestCase):
         with open(os.path.join(self.d, "kmsg"), "a") as f:
             f.write("".join(f"NVRM: Xid (PCI:0000:0b:00): 13, pid={i}\n" for i in range(n)))
 
+
+class BootApply(FakeGpu, unittest.TestCase):
     def test_boot_sets_the_caps_before_the_offsets_and_reads_back(self):
         rc, res, sched = self.run_mode("--boot")
         self.assertEqual(rc, 0, res)
@@ -271,6 +278,112 @@ class Install(unittest.TestCase):
                 self.assertIn(install.APPLIER, l)
                 self.assertTrue(l.split("=", 1)[1].startswith("/usr/bin/python3 -I -B /usr/local/libexec/ctune/"))
         self.assertIn("ConditionPathExists=/etc/ctune/gpu.json", install.UNIT_TEXT[install.BOOT_UNIT])
+
+
+class RuntimeApply(FakeGpu, unittest.TestCase):
+    """The passwordless helper (gpu-runtime-apply) against the same fakes. Anything running as the user can call
+    it, so it must take numbers only and keep the caps."""
+
+    def call(self, *argv):
+        from ctune.gpu import runtime_apply
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            rc = runtime_apply.main(list(argv), ba=boot_apply, oc=os.path.join(self.d, "oc"),
+                                    smi=os.path.join(self.d, "smi"))
+        return rc, json.loads(buf.getvalue().strip().splitlines()[-1])
+
+    def test_applies_the_caps_first_then_the_offsets_and_reads_back(self):
+        rc, res = self.call("--max-clock", "1905", "--core-offset", "40")
+        self.assertEqual((rc, res["ok"]), (0, True), res)
+        self.assertEqual(res["applied"], {"core_offset": 40, "mem_offset": None, "max_clock": 1905,
+                                          "power_limit": None})
+        self.assertEqual([c for c in self.calls() if c.startswith("set")],
+                         ["set --index 0 --min-clock 0 --max-clock 1905", "set --index 0 --freq-offset 40"])
+
+    def test_refuses_values_outside_the_caps_or_above_the_default_power(self):
+        for argv in (["--core-offset", "400"], ["--max-clock", "2500"], ["--power-limit", "420"],
+                     ["--power-limit", "nan"], ["--power-limit", "-5"], ["--power-limit", "1e-9"],
+                     ["--power-limit", "99"], []):
+            rc, res = self.call(*argv)
+            self.assertEqual((rc, res["ok"]), (1, False), argv)
+            self.assertTrue(res["errors"], argv)
+        self.assertFalse([c for c in self.calls() if c.startswith("set") or "-pl" in c])
+
+    def test_takes_no_path_or_tool_argument(self):
+        for argv in (["--nvidia-oc", "/tmp/x"], ["--nvidia-smi", "/tmp/x"], ["--config", "/tmp/x"],
+                     ["--state", "/tmp/x"], ["--nvidia"]):
+            with self.assertRaises(SystemExit), contextlib.redirect_stderr(io.StringIO()):
+                self.call(*argv)
+
+    def test_a_readback_mismatch_goes_back_to_stock(self):
+        self.fake(drift=15)
+        rc, res = self.call("--core-offset", "40")
+        self.assertEqual((rc, res["ok"], res.get("rolled_back")), (1, False, True))
+        self.assertIn("smi -i 0 -rgc", self.calls())
+
+    def test_reset_goes_to_stock(self):
+        rc, res = self.call("--reset")
+        self.assertEqual((rc, res["ok"]), (0, True), res)
+        self.assertEqual(res["readback"], {"core_offset": 0, "mem_offset": 0, "power_limit": 400.0})
+        self.assertIn("smi -i 0 -rgc", self.calls())
+
+    def test_the_installed_file_runs_by_its_shebang(self):
+        """pkexec runs the file itself: Linux hands the whole shebang tail to python3 as one argument."""
+        from ctune.gpu import runtime_apply
+        r = subprocess.run([runtime_apply.__file__, "--help"], capture_output=True, text=True, timeout=30)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        with open(boot_apply.__file__) as f:
+            self.assertEqual(f.readline().strip(), "#!/usr/bin/python3 -IB")
+
+    def test_polkit_rule_names_the_programs_one_user_and_root(self):
+        rule = install.polkit_rule("josemanosalvas", programs=["/var/usrlocal/libexec/ctune/gpu-runtime-apply"])
+        self.assertIn('var programs = ["/var/usrlocal/libexec/ctune/gpu-runtime-apply"];', rule)
+        self.assertIn('programs.indexOf(action.lookup("program")) >= 0', rule)
+        self.assertIn('action.lookup("user") == "root"', rule)
+        self.assertIn('subject.user == "josemanosalvas"', rule)
+        full = install.polkit_rule("josemanosalvas")
+        for p in install.PROGRAMS:
+            self.assertIn(f'"{os.path.realpath(p)}"', full)
+        self.assertEqual(full.count("polkit.Result.YES"), 1)
+        with self.assertRaises(ValueError):
+            install.polkit_rule("josemanosalvas", programs=['/x"]; polkit.Result.YES; ["'])
+        for bad in ('x" || true || "', "Root", "a b", ""):
+            with self.assertRaises(ValueError):
+                install.polkit_rule(bad)
+
+    def test_every_passwordless_file_exists_and_only_the_programs_are_executable(self):
+        for src, dst, mode in install.PASSWORDLESS_FILES:
+            self.assertTrue(os.path.isfile(src), src)
+            self.assertTrue(dst.startswith(install.LIBEXEC + "/"), dst)
+            self.assertEqual(mode == 0o755, dst in install.PROGRAMS, dst)
+        for p in install.PROGRAMS:
+            src = next(s for s, d, _ in install.PASSWORDLESS_FILES if d == p)
+            r = subprocess.run([src, "--help"], capture_output=True, text=True, timeout=30)
+            self.assertEqual(r.returncode, 0, (src, r.stderr))
+
+    def test_the_caller_keeps_the_state_and_follows_a_rollback(self):
+        from ctune.gpu import api
+        st = os.path.join(self.d, "gpu_state.json")
+        ok = {"ok": True, "reset": False, "applied": {"core_offset": 40, "mem_offset": None, "max_clock": 1905,
+                                                      "power_limit": None}, "errors": [],
+              "readback": {"core_offset": 40, "mem_offset": 0, "power_limit": 400.0}}
+        back = {"ok": False, "reset": False, "applied": None, "rolled_back": True, "errors": ["mismatch"],
+                "readback": {"core_offset": 0, "mem_offset": 0, "power_limit": 400.0}}
+        with mock.patch.object(api, "STATE", st), mock.patch.object(api.os.path, "isfile", return_value=True):
+            for res in (ok, back):
+                with mock.patch.object(api.subprocess, "run",
+                                       return_value=mock.Mock(returncode=0 if res["ok"] else 1, stdout=json.dumps(res),
+                                                              stderr="")) as run:
+                    if res["ok"]:
+                        out = api._helper(["--core-offset", "40", "--max-clock", "1905"])
+                        self.assertEqual(run.call_args.args[0][:2], ["pkexec", api.RUNTIME])
+                        self.assertEqual((out["applied"]["core_offset"], out["applied"]["max_clock"]), (40, 1905))
+                    else:
+                        with self.assertRaises(ValueError):
+                            api._helper(["--core-offset", "40"])
+                with open(st) as f:
+                    state = json.load(f)
+        self.assertEqual((state["core_offset"], state["max_clock"]), (0, None))
 
 
 class Applied(unittest.TestCase):

@@ -1,4 +1,4 @@
-#!/usr/bin/python3 -I -B
+#!/usr/bin/python3 -IB
 """Re-apply the signed-off GPU settings at boot and after resume, with nvidia_oc.
 
 `ctune gpu persist` installs a root-owned copy as /usr/local/libexec/ctune/gpu-boot-apply, beside a pinned

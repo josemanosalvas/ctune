@@ -21,6 +21,12 @@ from ctune.cpu import mprime, smu
 
 STATE = os.path.join(DATA, "cpu_state.json")
 HELPER = os.path.join(os.path.dirname(os.path.abspath(__file__)), "apply.py")
+RUNTIME = "/usr/local/libexec/ctune/cpu/apply.py"   # `ctune passwordless`: root-owned copy, no password prompt
+RUN_STATE = "/run/ctune/cpu-co.json"               # ... which keeps its state here, root-owned
+
+
+def _passwordless():
+    return os.geteuid() != 0 and os.path.isfile(RUNTIME)
 
 # The default per-core load is mprime (Prime95) in CoreCycler's modes (ctune/cpu/mprime.py). The "stress-ng" workload
 # is the older alternative: one stress-ng stressor at a time, one thread, pinned to the first logical CPU. Every
@@ -67,7 +73,7 @@ def _json(p):
 def applied():
     """What ctune read and wrote through the SMU since this boot (probe, boot values, applied margins, history)."""
     try:
-        s = _json(STATE)
+        s = _json(RUN_STATE if _passwordless() else STATE)
         return s if s.get("boot_id") == _boot_id() else {}
     except (OSError, ValueError):
         return {}
@@ -179,9 +185,12 @@ def status():
 
 # ---------------------------------------------------------------- root helper
 def _helper(args):
-    cmd = [sys.executable, "-I", "-B", HELPER, "--state", STATE, "--owner", f"{os.getuid()}:{os.getgid()}"] + args
-    if os.geteuid() != 0:
-        cmd = ["pkexec"] + cmd
+    if _passwordless():
+        cmd = ["pkexec", RUNTIME] + args
+    else:
+        cmd = [sys.executable, "-I", "-B", HELPER, "--state", STATE, "--owner", f"{os.getuid()}:{os.getgid()}"] + args
+        if os.geteuid() != 0:
+            cmd = ["pkexec"] + cmd
     try:
         r = subprocess.run(cmd, capture_output=True, text=True, timeout=600)
     except subprocess.TimeoutExpired:

@@ -57,7 +57,8 @@ TOOLS = {
     "mem_status": ("Platform, BIOS, drivers, live sensors, the error total, the latest snapshots and the journal tail.",
                    _obj(), lambda a: mem.status()),
     "mem_snapshot": ("Take a full memory snapshot: timings per channel, FCLK/UCLK/MCLK, voltages, DIMMs, decoded BIOS "
-                     "settings and the platform fingerprint. It needs root, so the user approves a password prompt.",
+                     "settings and the platform fingerprint. It needs root: no prompt once `ctune passwordless` is installed, "
+                     "else the user approves a password prompt.",
                      _obj({"label": S, "skip_devmem": {"type": "boolean"}}),
                      lambda a: mem.snapshot(a.get("label", ""), a.get("skip_devmem", False))),
     "mem_list_snapshots": ("List snapshot directory names (oldest first).", _obj(), lambda a: mem.snapshots()),
@@ -88,13 +89,14 @@ TOOLS = {
     "gpu_status": ("GPU clocks, offsets with their allowed ranges, power draw and limits, temperature, what currently "
                    "limits the clock (power cap, thermal...), settings ctune applied this boot, and the Xid error count.",
                    _obj(), lambda a: gpu.status()),
-    "gpu_apply": ("Apply GPU settings at runtime (root, password prompt). core_offset/mem_offset in MHz (NVML units; "
+    "gpu_apply": ("Apply GPU settings at runtime (root: no prompt once `ctune passwordless` is installed, else a password prompt). core_offset/mem_offset in MHz (NVML units; "
                   "the memory offset is half of what nvidia-settings shows), max_clock locks the core clock to 0..MHz "
                   "(with a positive core_offset this is the undervolt), power_limit in W. Out-of-range values are rejected.",
                   _obj({"core_offset": {"type": "integer"}, "mem_offset": {"type": "integer"},
                         "max_clock": {"type": "integer"}, "power_limit": {"type": "number"}}),
                   lambda a: gpu.apply(a.get("core_offset"), a.get("mem_offset"), a.get("max_clock"), a.get("power_limit"))),
-    "gpu_reset": ("Reset GPU tuning: offsets 0, clocks unlocked, default power limit (root, password prompt).",
+    "gpu_reset": ("Reset GPU tuning: offsets 0, clocks unlocked, default power limit (root: no prompt once "
+                  "`ctune passwordless` is installed, else a password prompt).",
                   _obj(), lambda a: gpu.reset()),
     "gpu_test": ("GPU stability test with 1 Hz telemetry, recorded in the journal. kind core runs gpu-burn (cuBLAS "
                  "matrix products whose results are compared, so silent compute errors count): FP32 for burn_seconds "
@@ -135,17 +137,17 @@ TOOLS = {
                    "clock, effective clock, voltage, power, temperature and C0 from the SMU pm_table, package power, "
                    "core machine-check counts per CPU, this boot's probe result, and any test cut short by a crash.",
                    _obj(), lambda a: cpu.status()),
-    "cpu_probe": ("Read every core's margin through the SMU (read-only, root, password prompt) and compare it with the "
+    "cpu_probe": ("Read every core's margin through the SMU (read-only, root: no prompt once `ctune passwordless` is installed) and compare it with the "
                   "BIOS values from the latest mem snapshot. cpu_apply refuses to write until a probe in the same "
                   "boot matches, so run it once per boot before the first cpu_apply.",
                   _obj(), lambda a: cpu.probe()),
-    "cpu_apply": ("Set one core's Curve Optimizer margin at runtime (root, password prompt), then read it back. margin "
+    "cpu_apply": ("Set one core's Curve Optimizer margin at runtime (root: no prompt once `ctune passwordless` is installed), then read it back. margin "
                   "is -30 to 30 and at most 5 away from the core's current value. dry_run checks the guardrails and "
                   "shows the SMU mailbox word without sending anything. The margin lasts until reboot.",
                   _obj({"core": {"type": "integer"}, "margin": {"type": "integer"}, "dry_run": {"type": "boolean"}},
                        ["core", "margin"]),
                   lambda a: cpu.apply(a["core"], a["margin"], a.get("dry_run", False))),
-    "cpu_reset": ("Restore the boot (BIOS) margin of every core ctune changed this boot (root, password prompt).",
+    "cpu_reset": ("Restore the boot (BIOS) margin of every core ctune changed this boot (root: no prompt once `ctune passwordless` is installed).",
                   _obj(), lambda a: cpu.reset()),
     "cpu_test": ("Per-core stability test, recorded in the journal. Prime95 (mprime) runs one thread pinned to each "
                  "core in turn, suspended 1 s in every 10 so the core keeps leaving and re-entering boost, as "
