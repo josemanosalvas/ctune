@@ -3,7 +3,7 @@
 
 Parses an exported HII database (a concatenation of EFI_HII_PACKAGE_LIST_HEADERs, as AMI Aptio V
 exports it through the "HiiDB" EFI variable) and builds a question table:
-formset, form path, prompt, help, varstore (GUID+name+size), VarOffset, width, type,
+formset, form path, prompt, help, varstore (GUID, name and size), VarOffset, width, type,
 options, min/max/step, defaults, and the suppressif/grayoutif/disableif conditions.
 
 Format references (UEFI Specification 2.10, Aug 2022):
@@ -94,7 +94,7 @@ def cstr(b, o):
 
 # ---------------------------------------------------------------------------- strings
 def parse_string_package(pkg):
-    """pkg = bytes of the whole package incl. 4-byte header. Returns (language, {id: str})."""
+    """pkg is the bytes of the whole package, including the 4-byte header. Returns (language, {id: str})."""
     hdr_size, info_off = struct.unpack_from("<II", pkg, 4)
     lang = cstr(pkg, 4 + 4 + 4 + 32 + 2)  # Header, HdrSize, StringInfoOffset, LanguageWindow[16], LanguageName
     strings = {}
@@ -156,7 +156,7 @@ def parse_string_package(pkg):
 
 # ---------------------------------------------------------------------------- package lists
 def parse_package_lists(db):
-    """Returns list of dicts {guid, offset, length, packages: [(type, abs_offset, bytes)]}."""
+    """Returns a list of dicts {guid, offset, length, packages: [(type, abs_offset, bytes)]}."""
     out = []
     off = 0
     while off + 20 <= len(db):
@@ -190,7 +190,8 @@ class Node:
 
 
 def build_tree(form_pkg, base_off):
-    """form_pkg = whole package bytes incl. header. Returns root Node with top-level opcodes as children."""
+    """form_pkg is the whole package, including the header. Returns the root Node with the top-level opcodes as
+    children."""
     root = Node(-1, b"", base_off, True)
     stack = [root]
     p = 4
@@ -215,14 +216,14 @@ def build_tree(form_pkg, base_off):
 
 # ---------------------------------------------------------------------------- expressions
 class Expr:
-    """Postfix IFR expression -> readable text + evaluator over question values."""
+    """A postfix IFR expression as readable text, with an evaluator over question values."""
 
     def __init__(self, nodes):
         self.nodes = nodes  # list of Node (expression opcodes, possibly with scoped children)
 
     def flat(self):
         """Pre-order flatten. Some compilers (seen in this AMI/AMD IFR) set the Scope bit on the first
-        expression opcode (e.g. EQ_ID_VAL) so the rest of the postfix expression (NOT, OR, ...) sits
+        expression opcode (for example EQ_ID_VAL), so the rest of the postfix expression (NOT, OR, ...) sits
         inside its scope until the matching END; in binary order the opcode precedes its nested ops."""
         out = []
 
@@ -305,7 +306,7 @@ class Expr:
         return " ; ".join(st) if st else "<empty>"
 
     def evaluate(self, qval):
-        """qval(qid) -> int or None. Returns True/False/None (None = cannot evaluate)."""
+        """qval(qid) returns an int or None. Returns True, False or None (None means it cannot evaluate)."""
         st = []
         try:
             for t in self.tokens():
@@ -389,9 +390,9 @@ class FormSet:
         self.title = None
         self.help = None
         self.class_guids = []
-        self.varstores = {}     # id -> dict
+        self.varstores = {}     # {id: dict}
         self.defaultstores = {}
-        self.forms = {}         # form id -> dict(title, refs=[...])
+        self.forms = {}         # {form id: dict(title, refs=[...])}
         self.questions = []     # list of dicts
         self.statements = []    # subtitles / text (context only)
         self.exprs = []         # (question index, kind, Expr)
@@ -458,7 +459,7 @@ def _walk(fs, nodes, ctx):
             fs.forms.setdefault(fid, dict(id=fid, title=title, refs=[], conds=list(ctx["conds"])))
             _walk(fs, nd.children, dict(ctx, form=fid, question=None))
         elif op in COND_OPS:
-            # leading expression children form the condition; rest are the guarded statements
+            # leading expression children form the condition; the rest are the guarded statements
             ch = nd.children
             k = 0
             while k < len(ch) and ch[k].op in EXPR_OPS:
@@ -470,7 +471,7 @@ def _walk(fs, nodes, ctx):
             q = _question(fs, nd, ctx)
             if q is not None and op != OP["REF"]:
                 pass
-            # children: options, defaults, nested conditions on options, etc.
+            # children: options, defaults, nested conditions on options and so on
             _walk_question_children(fs, q, nd.children, ctx)
         elif op in (OP["SUBTITLE"], OP["TEXT"]):
             prompt = u16(d, 2)
@@ -480,9 +481,9 @@ def _walk(fs, nodes, ctx):
             if nd.children:
                 _walk(fs, nd.children, ctx)
         elif op == OP["GUID"]:
-            pass  # vendor extensions (EDK2 label/class/subclass, AMI) -- ignored
+            pass  # vendor extensions (EDK2 label, class and subclass, AMI), ignored
         elif nd.children:
-            # any other scoped opcode: descend (statements inside, e.g. LOCKED/MODAL)
+            # any other scoped opcode: descend (statements inside, for example LOCKED or MODAL)
             if op not in EXPR_OPS:
                 _walk(fs, nd.children, ctx)
         i += 1
@@ -601,7 +602,7 @@ class HiiDb:
     def __init__(self, data):
         self.data = data
         self.package_lists = parse_package_lists(data)
-        self.strings = {}       # pl guid -> {lang: {id: str}}
+        self.strings = {}       # {pl guid: {lang: {id: str}}}
         self.formsets = []
         for pl in self.package_lists:
             sl = {}
@@ -615,7 +616,7 @@ class HiiDb:
 
     # form path via REF graph ------------------------------------------------
     def _build_paths(self):
-        parent = {}  # (fs_guid, form_id) -> (fs_guid, form_id, prompt)
+        parent = {}  # {(fs_guid, form_id): (fs_guid, form_id, prompt)}
         fs_by_guid = {}
         for fs in self.formsets:
             fs_by_guid.setdefault(fs.guid, fs)

@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """Root helper for persisting GPU settings, run through pkexec by ctune.gpu.persist (one password prompt per call).
 
-  install.py --binary NVIDIA_OC --config FILE   install, write FILE as /etc/ctune/gpu.json, and (re)start the boot
-                                                unit, which applies it now through the installed copy
+  install.py --binary NVIDIA_OC --config FILE   install, write FILE as /etc/ctune/gpu.json, and start or restart the
+                                                boot unit, which applies it now through the installed copy
   install.py --binary NVIDIA_OC --selftest FILE install, then apply FILE once through the installed copy; no config
                                                 is written, so the units stay inert
   install.py --clear [--uninstall]              remove /etc/ctune/gpu.json; --uninstall also removes the units and
@@ -14,8 +14,8 @@
 
 Installing copies nvidia_oc and boot_apply.py into /usr/local/libexec/ctune, owned by root, and writes and enables
 ctune-gpu-persist.service (boot) and ctune-gpu-persist-resume.service (after suspend). The boot path then runs only
-these root-owned copies, never the repo, which the user can write. Settings applied now are not changed by
---clear; a reboot clears them. A persist whose apply fails removes its config again.
+these root-owned copies, never the repo, which the user can write. --clear does not change the settings applied
+now; a reboot clears them. A persist whose apply fails removes its config again.
 """
 import argparse
 import hashlib
@@ -114,8 +114,8 @@ def check_root_owned(path):
 
 
 def put(src_or_text, dst, mode, text=False):
-    """Write dst as root with mode. The temp file is created exclusively, 0600 and without following a link, so a
-    user cannot open it for writing between its creation and the rename (pkexec keeps the caller's umask)."""
+    """Write dst as root with mode. It creates the temporary file exclusively, with mode 0600 and without following a
+    link, so a user cannot open it for writing between its creation and the rename (pkexec keeps the caller's umask)."""
     os.makedirs(os.path.dirname(dst), mode=0o755, exist_ok=True)
     check_root_owned(dst)
     tmp = dst + ".ctune-tmp"

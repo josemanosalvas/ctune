@@ -1,12 +1,12 @@
 """hwmon readings relevant to memory tuning, with board-specific labels.
 
-Board maps say which Super I/O input carries which rail/header. Unknown boards still get raw values.
+Board maps say which Super I/O input carries which rail or fan header. Unknown boards still get raw values.
 """
 import glob
 import os
 import subprocess
 
-# Gigabyte B550 AORUS PRO (rev 1.0): LibreHardwareMonitor SuperIOHardware.cs (IT8688E / IT8792E sections),
+# Gigabyte B550 AORUS PRO (rev 1.0): LibreHardwareMonitor SuperIOHardware.cs (IT8688E and IT8792E sections),
 # frankcrawford/it87 'gigabyte-it87-amd.conf' (SIV 0x6008090B). Voltages without a divider only.
 BOARDS = {
     "B550 AORUS PRO": {

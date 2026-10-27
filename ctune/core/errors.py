@@ -3,8 +3,8 @@
 AMD's mce_amd threshold driver exposes a per-bank `error_count` under
 /sys/devices/system/machinecheck/machinecheck<cpu>/<bank>/<block>/error_count. The counter is
 reset at boot and counts corrected errors per bank, so it works as an "errors per hour" signal,
-not just as a pass/fail result. Corrected errors are polled every `check_interval` seconds (300 s
-by default), so read again at least 5 minutes after a test before trusting a zero.
+not only as a pass or fail result. The kernel polls corrected errors every `check_interval` seconds
+(300 s by default), so read again at least 5 minutes after a test before trusting a zero.
 """
 import glob
 import os
@@ -12,7 +12,7 @@ import subprocess
 
 ROOT = "/sys/devices/system/machinecheck"
 
-# What each bank family points at when tuning memory / fabric / CPU.
+# What each bank family points at when tuning memory, fabric or CPU.
 SUBSYSTEM = {
     "coherent_station": "fabric", "pie": "fabric", "param_block": "fabric",
     "nbio": "pcie/io", "umc": "memory controller",
@@ -76,7 +76,7 @@ def check_interval():
 
 
 def kernel_hw_errors(since="-24h", limit=40):
-    """Recent 'Hardware Error' / mce lines from the kernel log (may be empty if the journal rotated)."""
+    """Recent 'Hardware Error' and mce lines from the kernel log (empty if the journal has rotated them away)."""
     try:
         r = subprocess.run(["journalctl", "-k", "--no-pager", "-o", "short-iso", "--since", since,
                             "-g", "Hardware Error|mce:|Machine check"],
@@ -102,5 +102,5 @@ def summary(since="-24h"):
         "poll_interval_s": check_interval(),
         "uptime_s": float(open("/proc/uptime").read().split()[0]),
         "kernel_log": kernel_hw_errors(since),
-        "note": "Corrected errors are polled every poll_interval_s; wait that long after a test before reading.",
+        "note": "The kernel polls corrected errors every poll_interval_s; wait that long after a test before reading.",
     }

@@ -2,16 +2,17 @@
 
 Each run is a transient unit `ctune-run-<kind>-<timestamp>.service` started with `systemd-run --user` (lingering is
 on). The settings come from the systemd 259 man pages and probe units (docs/research/reuse-tools.md):
-- KillMode=mixed + KillSignal=SIGINT: `systemctl --user stop` raises KeyboardInterrupt in Python, so `finally`
-  blocks stop the loads; systemd then SIGKILLs whatever is left in the unit's cgroup. The default SIGTERM skips them.
-  A gpu-burn container runs in podman's own scope, outside that cgroup, so podman's --timeout caps it instead.
-- TimeoutStopSec=90s + TimeoutStopFailureMode=kill: a system default can be as short as 15 s, and Fedora aborts
+- KillMode=mixed with KillSignal=SIGINT: `systemctl --user stop` raises KeyboardInterrupt in Python, so `finally`
+  blocks stop the loads, and systemd then sends SIGKILL to whatever is left in the unit's cgroup. The default SIGTERM
+  skips the `finally` blocks. A gpu-burn container runs in podman's own scope, outside that cgroup, so podman's
+  --timeout caps it instead.
+- TimeoutStopSec=90s with TimeoutStopFailureMode=kill: a system default can be as short as 15 s, and Fedora aborts
   (SIGABRT) by default.
 - OOMPolicy=continue: a kernel OOM kill of one stress child must not stop the whole test.
-- --expand-environment=no: systemd would expand ${...} and $$ inside the JSON spec. python3 -u: -I ignores
-  PYTHONUNBUFFERED, and the log would fill only at exit.
-- No --collect and no -r: a failed run stays loaded for inspection; a clean one unloads and its result is in the
-  journal. Transient units vanish at reboot, so the fsync'd crash marker (ctune.core.stress) still records crashes.
+- --expand-environment=no: otherwise systemd would expand ${...} and $$ inside the JSON spec. python3 -u: -I ignores
+  PYTHONUNBUFFERED, and without -u the log would fill only at exit.
+- No --collect and no -r: a failed run stays loaded for inspection, and a clean one unloads with its result in the
+  journal. Transient units disappear at reboot, so the fsynced crash marker (ctune.core.stress) still records crashes.
 """
 import json
 import os
@@ -78,7 +79,7 @@ def start(kind, /, **kwargs):   # positional-only: mem_test and gpu_test take a 
         m = stress.marker_read()
         if m and m.get("unit") == unit:
             return {"started": kind, "unit": unit, "log": log, "phase": m.get("phase"),
-                    "next": "poll test_status; stop with test_stop; the result lands in the journal"}
+                    "next": "poll test_status; stop with test_stop; the result goes into the journal"}
         st = stress.unit_state(unit)
         if st.get("LoadState") != "loaded" or st.get("ActiveState") == "failed":
             break
@@ -107,7 +108,7 @@ def status():
 
 
 def stop():
-    """Stop the running detached test: SIGINT to the test, then systemd kills what is left (up to 90 s)."""
+    """Stop the running detached test: the test gets SIGINT, then systemd kills what is left (after up to 90 s)."""
     m = stress.running()
     unit = (m or {}).get("unit") or next((u["Id"] for u in units() if u.get("ActiveState") in stress.ACTIVE_STATES),
                                          None)
@@ -121,7 +122,7 @@ def stop():
 
 def dispatch(spec):
     """Entry point of a detached run (bin/ctune _run). Records a stop or a crash of ctune itself in the journal,
-    because the marker is removed when a test ends by an exception."""
+    because a test that ends with an exception removes its marker."""
     d = json.loads(spec)
     kind, kw = d["kind"], d.get("kwargs", {})
     if kind == "mem_test":

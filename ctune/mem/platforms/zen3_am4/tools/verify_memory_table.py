@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
-"""Independent extraction of the memory-related setup values (does not use hii_ifr.py / bios_settings_decode.py).
+"""Independent extraction of the memory-related setup values (it uses neither hii_ifr.py nor bios_settings_decode.py).
 
 For each item: find the ONE_OF/NUMERIC/CHECKBOX question by (formset title, prompt regex[, form title regex]) in
 hiidb.bin, take VarStoreId/VarOffset/width straight from the opcode bytes, map VarStoreId to the VARSTORE(_EFI)
-name+GUID of the same formset, read the bytes from the efivar copy, and resolve the option text.
+name and GUID of the same formset, read the bytes from the efivar copy, and resolve the option text.
 Writes <snapshot>/decoded/verify_independent/{questions_all.json, memory_settings.json, memory_settings.tsv}.
 Run: python3 -I verify_memory_table.py
 """

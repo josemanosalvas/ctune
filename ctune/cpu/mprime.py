@@ -3,13 +3,16 @@
 One mprime process per core: one worker, one thread, pinned with taskset to the first logical CPU of the core, and
 suspended for 1 s every 10 s so the core keeps dropping to idle and boosting back. The modes are CoreCycler's presets
 (sp00n/corecycler a95b523, script-corecycler.ps1: FFT ranges L7316-7361, TortureWeak L6135-6194, prime.txt keys
-L7530-7639; default SSE + Huge in configs/default.config.ini L247, L265: the least heat and so the highest boost).
-CoreCycler is CC BY-NC-SA, so nothing is copied; the same settings are written here from the mprime source.
+L7530-7639; the default is SSE with Huge FFTs in configs/default.config.ini L247, L265, which makes the least heat
+and so the highest boost). CoreCycler is CC BY-NC-SA, so this file copies nothing from it and writes the same
+settings from the mprime source.
 
 From the mprime 30.19 source (p95v3019b21.source.zip; research notes in docs/research/reuse-tools.md):
 - EnableSetAffinity=0 is required. Otherwise mprime binds its torture worker to both threads of hwloc core 0 and
-  ignores the taskset mask (commonb.c L414-423, L601-633). Checked here: all mprime threads stay on the chosen CPU.
-- -W<dir> must be absolute and joined to the flag: mprime first changes to its own directory (prime.c L191-200).
+  ignores the taskset mask (commonb.c L414-423, L601-633). With it, a live check found every mprime thread on the
+  chosen CPU.
+- -W<dir> must be absolute and joined to the flag, because mprime first changes to its own directory (prime.c
+  L191-200).
 - TortureTime=1 runs one test per FFT length, so each length passes once per cycle (commonb.c L8066-8133).
 - mprime exits 0 even when the torture test fails, so the verdict comes from results.txt and stdout only.
 """
@@ -35,7 +38,7 @@ MODES = {
 }
 ISA_KEYS = {
     "sse": {"CpuSupportsAVX": 0, "CpuSupportsAVX2": 0, "CpuSupportsFMA3": 0, "CpuSupportsAVX512F": 0,
-            "TortureWeak": 1097728},    # CPU_AVX | CPU_FMA3 | CPU_AVX512F masked off (gwnum/cpuid.h L49-61)
+            "TortureWeak": 1097728},    # CPU_AVX, CPU_FMA3 and CPU_AVX512F masked off (gwnum/cpuid.h L49-61)
     "avx2": {"CpuSupportsAVX": 1, "CpuSupportsAVX2": 1, "CpuSupportsFMA3": 1, "CpuSupportsAVX512F": 0,
              "TortureWeak": 1048576},
 }
@@ -116,8 +119,8 @@ def _threads_on(pid, cpu):
 
 
 def run_core(cpu, mode, seconds, wd, full_cycle=False, mark=None):
-    """Run mprime on one logical CPU for `seconds` (or one full FFT cycle, capped at 40 min). mark(phase) tags
-    telemetry as 'p95' or 'suspended'. Returns parse()'s dict plus run facts."""
+    """Run mprime on one logical CPU for `seconds` (or one full FFT cycle, for at most 40 min). mark(phase) tags
+    telemetry as 'p95' or 'suspended'. Returns parse()'s dict and facts about the run."""
     if mode not in MODES:
         raise ValueError(f"mode is one of {sorted(MODES)}")
     if not os.access(MPRIME, os.X_OK):

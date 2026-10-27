@@ -27,15 +27,15 @@ def _banner(st):
         mascot.TITLE,
         f"{st.get('board')} · BIOS {st.get('bios')}",
         mascot.paint(counts, "r") if errors else counts,
-        "see `ctune errors` / `ctune gpu xid`" if errors else "all quiet",
+        "see `ctune errors` and `ctune gpu xid`" if errors else "all quiet",
     ]) + "\n"
 
 
 def build():
-    ap = argparse.ArgumentParser(prog="ctune", description="Agent-assisted RAM / CPU / GPU tuning toolkit")
+    ap = argparse.ArgumentParser(prog="ctune", description="Agent-assisted RAM, CPU and GPU tuning toolkit")
     sub = ap.add_subparsers(dest="cmd", required=True)
     sub.add_parser("status", help="memory, CPU and GPU status, sensors, error counters, journal tail")
-    sub.add_parser("sensors", help="VDIMM/VTT/VSOC, fans per header, temps")
+    sub.add_parser("sensors", help="VDIMM, VTT and VSOC, fans per header, temperatures")
     s = sub.add_parser("errors", help="corrected machine-check errors per bank (WHEA equivalent)")
     s.add_argument("--since", default="-24h")
     j = sub.add_parser("journal", help="tuning journal")
@@ -49,22 +49,22 @@ def build():
     s.add_argument("--kind")
 
     m = sub.add_parser("mem", help="RAM / fabric").add_subparsers(dest="mcmd", required=True)
-    s = m.add_parser("snapshot", help="full snapshot of timings/clocks/voltages/BIOS settings (root via pkexec)")
+    s = m.add_parser("snapshot", help="full snapshot of timings, clocks, voltages and BIOS settings (root through pkexec)")
     s.add_argument("--label", default="")
     s.add_argument("--skip-devmem", action="store_true")
     m.add_parser("snapshots", help="list snapshots")
     s = m.add_parser("show", help="print a snapshot summary")
     s.add_argument("name", nargs="?", default="latest")
-    s = m.add_parser("compare", help="diff two snapshots (default previous vs latest)")
+    s = m.add_parser("compare", help="diff two snapshots (default: the previous one against the latest)")
     s.add_argument("old", nargs="?", default="previous")
     s.add_argument("new", nargs="?", default="latest")
-    s = m.add_parser("verify", help="BIOS configuration vs running hardware (writes verify.md)")
+    s = m.add_parser("verify", help="compare the BIOS configuration with the running hardware (writes verify.md)")
     s.add_argument("name", nargs="?", default="latest")
     s = m.add_parser("checklist", help="settings to re-enter after a BIOS flash (writes reentry_checklist.md)")
     s.add_argument("name", nargs="?", default="latest")
     s = m.add_parser("test", help="RAM stability: stressapptest over the free RAM with a GPU heat load")
     s.add_argument("kind", nargs="?", default="screen", choices=["screen", "fabric"])
-    s.add_argument("--minutes", type=float, help="default 25 (screen) or 90 + 20 idle (fabric)")
+    s.add_argument("--minutes", type=float, help="default 25 (screen) or 90 plus 20 idle (fabric)")
     s.add_argument("--no-gpu-heat", action="store_true")
     s.add_argument("--mb", type=int, help="cap the RAM the test takes (default: free RAM minus 1.5 GB)")
     s.add_argument("--detach", action="store_true", help="run in the background; follow with `ctune test-status`")
@@ -76,17 +76,17 @@ def build():
 
     g = sub.add_parser("gpu", help="NVIDIA GPU").add_subparsers(dest="gcmd", required=True)
     g.add_parser("status", help="clocks, offsets, power, limiters, applied settings, Xid count")
-    s = g.add_parser("apply", help="apply settings (root via pkexec); they last until reboot")
+    s = g.add_parser("apply", help="apply settings (root through pkexec); they last until reboot")
     s.add_argument("--core-offset", type=int)
     s.add_argument("--mem-offset", type=int, help="NVML units (half of what nvidia-settings shows)")
-    s.add_argument("--max-clock", type=int, help="lock the core clock to 0..MHZ")
+    s.add_argument("--max-clock", type=int, help="lock the core clock to the range 0 to MHZ")
     s.add_argument("--power-limit", type=float, help="watts")
     g.add_parser("reset", help="offsets 0, unlock clocks, default power limit")
     s = g.add_parser("test", help="core (gpu-burn, results checked), graphics (Quake II RTX), vram (memtest_vulkan), "
                                   "screen (all three), vkpeak; the defaults are gpu.test's")
     s.add_argument("kind", nargs="?", default=argparse.SUPPRESS, choices=list(gpu.KINDS))
     for flag, what in (("--burn-seconds", "gpu-burn FP32 (results checked)"),
-                       ("--fp64-seconds", "gpu-burn FP64 (at least 90 s): low power, expected to sit at the locked clock"),
+                       ("--fp64-seconds", "gpu-burn FP64 (at least 90 s): low power, expected to run at the locked clock"),
                        ("--tc-seconds", "gpu-burn on the tensor cores"),
                        ("--transient-seconds", "gpu-burn FP32 frozen 1 s in every 10: load transients"),
                        ("--graphics-seconds", "Quake II RTX timedemo passes: RT cores; crashes and hangs only"),
@@ -98,25 +98,25 @@ def build():
     g.add_parser("q2rtx-setup", help="download Quake II RTX and the Steam Linux Runtime it runs in (about 1.3 GB "
                                      "once, SHA256 pinned)")
     s = g.add_parser("persist", help="re-apply the settings applied now at every boot, if a green sign-off covers "
-                                     "them (root via pkexec)")
+                                     "them (root through pkexec)")
     s.add_argument("--dry-run", action="store_true", help="show the config or the reasons it is refused")
     s.add_argument("--reset-guard", action="store_true", help="clear a tripped crash-loop guard instead")
-    s = g.add_parser("unpersist", help="stop re-applying at boot (root via pkexec); settings applied now stay until reboot")
+    s = g.add_parser("unpersist", help="stop re-applying at boot (root through pkexec); settings applied now stay until reboot")
     s.add_argument("--uninstall", action="store_true", help="also remove the units and /usr/local/libexec/ctune")
     g.add_parser("persist-setup", help="build nvidia_oc for the boot unit (podman, pinned commit, about 1 GB download once)")
     g.add_parser("persist-selftest", help="install the boot side and apply the current values through it once, a "
-                                          "no-op (root via pkexec)")
+                                          "no-op (root through pkexec)")
     s = g.add_parser("xid", help="NVIDIA Xid errors from the kernel log")
     s.add_argument("--since", default="boot")
 
     c = sub.add_parser("cpu", help="Curve Optimizer per core").add_subparsers(dest="ccmd", required=True)
     c.add_parser("status", help="margin per core (BIOS or ctune), clocks, voltage, temperature, core MCA errors")
-    c.add_parser("probe", help="read every core's margin through the SMU and compare with the BIOS (root via pkexec)")
-    s = c.add_parser("apply", help="set one core's margin (root via pkexec); lasts until reboot")
+    c.add_parser("probe", help="read every core's margin through the SMU and compare it with the BIOS (root through pkexec)")
+    s = c.add_parser("apply", help="set one core's margin (root through pkexec); it lasts until reboot")
     s.add_argument("--core", type=int, required=True)
-    s.add_argument("--margin", type=int, required=True, help="-30..30, at most 5 away from the current value")
+    s.add_argument("--margin", type=int, required=True, help="-30 to 30, at most 5 away from the current value")
     s.add_argument("--dry-run", action="store_true", help="check the guardrails and print the mailbox word; send nothing")
-    c.add_parser("reset", help="restore the boot (BIOS) margin of every core ctune changed (root via pkexec)")
+    c.add_parser("reset", help="restore the boot (BIOS) margin of every core ctune changed (root through pkexec)")
     s = c.add_parser("test", help="mprime (Prime95) on one thread per core in turn, CoreCycler-style, with telemetry")
     s.add_argument("--cores", help="comma-separated core numbers (default all)")
     s.add_argument("--seconds-per-core", type=int, default=360)
@@ -127,12 +127,12 @@ def build():
     s.add_argument("--detach", action="store_true")
     s.add_argument("--note", default="")
 
-    s = sub.add_parser("passwordless", help="let GPU apply/reset, CPU probe/apply/reset and RAM snapshots run without a "
-                                            "password: root-owned helpers plus a polkit rule for this user (one prompt)")
+    s = sub.add_parser("passwordless", help="let GPU apply and reset, CPU probe, apply and reset, and RAM snapshots run without a "
+                                            "password, through root-owned helpers and a polkit rule for this user (one prompt)")
     s.add_argument("--remove", action="store_true")
     s = sub.add_parser("signoff", help="multi-hour suite: ram, ycruncher, cpu, cpu_heavy, gpu, combined, idle (about 5 h 30 min)")
     s.add_argument("--phases", help=f"comma-separated subset of {','.join(signoff.PHASES)}")
-    s.add_argument("--minutes", help="per-phase overrides, e.g. ram=120,idle=60")
+    s.add_argument("--minutes", help="per-phase overrides, for example ram=120,idle=60")
     s.add_argument("--keep-going", action="store_true", help="run every phase even after a red one")
     s.add_argument("--mb", type=int, help="cap the RAM the memory phases take")
     s.add_argument("--detach", action="store_true")

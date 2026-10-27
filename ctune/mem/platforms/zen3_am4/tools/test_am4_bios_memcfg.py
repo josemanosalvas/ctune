@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Offline tests for am4_bios_memcfg.py (the APOB / SPD / Easy* / NVS sections). No root needed.
+"""Offline tests for am4_bios_memcfg.py (the APOB, SPD, Easy* and NVS sections). No root needed.
 
 Usage: python3 -I test_am4_bios_memcfg.py OUTDIR [--work DIR] [--sibling-tables DIR]
 
@@ -10,8 +10,8 @@ Everything is synthetic, built from the documented layouts:
     ApobChannelTimings.cs, ApobDdr4ModeRegisters.cs), 7/6 (ApobEventLog.cs), SMBIOS 8/8 (ApobDmiInfo.cs),
     FABRIC 9/9 (ApobMemoryMap.cs), an "encrypted" entry, and a second entry chain reached only via the header list.
   * DDR4 SPDs with XMP 2.0 profiles (ZenStates-Core Ddr4SpdDecoder.cs offsets, JESD21-C Annex L).
-  * An AOD SSDT (OperationRegion + Field AML, ACPI 6.5 sec. 20.2) and an AODT buffer with DSPD SPD copies.
-  * EDK2 DXE pool headers/tails (MdeModulePkg/Core/Dxe/Mem/Pool.c) in front of the Easy* buffers and the AODT.
+  * An AOD SSDT (OperationRegion and Field AML, ACPI 6.5 sec. 20.2) and an AODT buffer with DSPD SPD copies.
+  * EDK2 DXE pool headers and tails (MdeModulePkg/Core/Dxe/Mem/Pool.c) in front of the Easy* buffers and the AODT.
   * A sparse 'physical memory' image (--devmem), a fake /sys/firmware/memmap and the snapshot's real efivars.
 The MR / SPD values and serials are invented test vectors, not a real machine's settings.
 The offline run needs a ctune snapshot for its pm_table and efivars (CTUNE_SNAPSHOT=data/snapshots/<name>). The
@@ -20,7 +20,7 @@ sections (CTUNE_MEMCFG_BEFORE=FILE); without it that check is skipped.
 """
 import argparse, contextlib, hashlib, importlib.util, io, json, os, random, shutil, struct, subprocess, sys, time
 
-sys.dont_write_bytecode = True  # no __pycache__ next to the scripts / the reference copy
+sys.dont_write_bytecode = True  # no __pycache__ next to the scripts or the reference copy
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 SCRIPT = os.path.join(os.path.dirname(HERE), "am4_bios_memcfg.py")
@@ -79,7 +79,7 @@ def spd_image(serial, part="4400 C19 Series", year=0x19, week=0x23):
     s[325:329] = bytes.fromhex(serial)
     s[329:349] = part.encode().ljust(20)
     s[349], s[350], s[351], s[352] = 0x00, 0x80, 0xCE, 0x00                 # DRAM: Samsung (bank 1, 0xCE)
-    s[384:388] = bytes([0x0C, 0x4A, 0x03, 0x20])                            # XMP 2.0, profiles 1+2, 1 DPC
+    s[384:388] = bytes([0x0C, 0x4A, 0x03, 0x20])                            # XMP 2.0, profiles 1 and 2, 1 DPC
     for o, vdd, tck, cls, taa, trcd, tras_m, trc_ps in ((393, 0xAD, 454, (16, 17, 18, 19), 8636, 8636, 141, 26363),
                                                         (440, 0xA3, 556, (15, 16, 17), 9444, 10556, 173, 32222)):
         s[o] = vdd
@@ -152,7 +152,7 @@ CLK_P1 = [11, 9, 11, 11, 6, 28, 39, 12, 4, 2, 20, 5, 6, 5]
 
 
 def put_block(buf, memclk_at, memclk, gap, clocks, rfc, mr_off, mrs, extra_mrs=(), filler=None):
-    """memclk_at = offset of MEMCLK inside buf (= data of the GEN 7/3 entry)."""
+    """memclk_at is the offset of MEMCLK inside buf (the data of the GEN 7/3 entry)."""
     for i, v in enumerate(MIN_TIMES):
         struct.pack_into("<H", buf, memclk_at - 24 + 2 * i, v)
     struct.pack_into("<H", buf, memclk_at, memclk)
@@ -368,7 +368,7 @@ def quiet(fn, *a):
 
 # ------------------------------------------------------------------ tests
 def test_mr_tables():
-    # coreboot ddr4.c ddr4_cas_to_mr0_map (L297-335): CL 9..32 -> MR0 bits; decode must give the CL back
+    # coreboot ddr4.c ddr4_cas_to_mr0_map (L297-335) maps CL 9 to 32 to MR0 bits; the decode must give the CL back
     enc = [0x0000, 0x0004, 0x0010, 0x0014, 0x0020, 0x0024, 0x0030, 0x0034, 0x0064, 0x0040, 0x0070, 0x0044, 0x0074,
            0x0050, 0x0060, 0x0054, 0x1000, 0x1004, 0x1010, 0x1014, 0x1020, 0x1024, 0x1030, 0x1034]
     bad = [(cl, bm.mr_cl(e)) for cl, e in zip(range(9, 33), enc) if cl not in (29, 31) and bm.mr_cl(e) != cl]
@@ -380,7 +380,7 @@ def test_mr_tables():
           not bad and bm.mr_wr(1 << 13) == 26 and bm.mr_wr(1 << 13 | 1 << 9) == 28, str(bad))
     cw = {9: 0, 10: 1, 11: 2, 12: 3, 14: 4, 16: 5, 18: 6, 20: 7}       # coreboot ddr4_cwl_to_mr2_map L377-386
     check("MR2 CWL decode", all(bm.mr_cwl(c << 3) == v for v, c in cw.items()))
-    check("MR6 tCCD_L decode 4..8, reserved -> 0", [bm.mr_tccdl(c << 10) for c in range(8)] == [4, 5, 6, 7, 8, 0, 0, 0])
+    check("MR6 tCCD_L decodes 4 to 8, and reserved codes to 0", [bm.mr_tccdl(c << 10) for c in range(8)] == [4, 5, 6, 7, 8, 0, 0, 0])
     d, lines = bm.decode_mrs(MR_A_P0, 1540)
     exp = {"CL": 14, "WR": 26, "RTP_autoprecharge": 13, "CWL": 14, "Ron_ohm": 34, "RttNom": "RZQ/7 (34 ohm)",
            "RttWr": "RZQ/3 (80 ohm)", "RttPark": "RZQ/5 (48 ohm)", "geardown": "1/4 rate (gear-down on)",
@@ -708,7 +708,7 @@ def main():
     check("EPERM hint text unchanged from the pre-change script",
           quiet(bm.explain, e1, 0xA200000) == quiet(bm_old.explain, e1, 0xA200000))
     real_pread = os.pread
-    refused = (0xA200000, 0xA20E000), (0xBC9F2000, 0xBCB60000)   # APOB range + the first 1.4 MB of the big range
+    refused = (0xA200000, 0xA20E000), (0xBC9F2000, 0xBCB60000)   # APOB range and the first 1.4 MB of the big range
 
     def pread(fd, n, off):
         if any(lo <= off < hi for lo, hi in refused):
@@ -731,7 +731,8 @@ def main():
     open(os.path.join(a.outdir, "eperm_simulation.txt"), "w").write(txt)
     big = open(os.path.join(eperm_dir, "nvs_bc9f2000-bd0d8fff.bin"), "rb").read() \
         if os.path.exists(os.path.join(eperm_dir, "nvs_bc9f2000-bd0d8fff.bin")) else b""
-    check("EPERM simulation: APOB refused -> hint; partly refused NVS range saved zero-filled; EasyHealth still dumped",
+    check("EPERM simulation: a refused APOB gives the hint, a partly refused NVS range is saved zero-filled, "
+          "EasyHealth is still dumped",
           "APOB not found/readable" in txt and "Boot once with kernel arg iomem=relaxed" in txt and
           txt.count("Boot once with kernel arg iomem=relaxed") <= 4 and
           "0xA200000-0xA20DFFF (56 KB): not readable" in txt and "(7068 KB): 366 refused page(s)" in txt and

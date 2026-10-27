@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
-"""Dump Gigabyte EasyTune 'GSAT' AML package (Name(GSAT, Package(){...})) from a decompressed SSDT blob.
-AML encodings per ACPI 6.5 spec section 20.2 (PackageOp 0x12, PkgLength 20.2.4, data object prefixes 20.2.3).
+"""Dump the Gigabyte EasyTune 'GSAT' AML package (Name(GSAT, Package(){...})) from a decompressed SSDT blob.
+AML encodings follow ACPI 6.5 section 20.2 (PackageOp 0x12, PkgLength 20.2.4, data object prefixes 20.2.3).
 usage: python3 -I gsat_dump.py <blob> [offset_of_'GSAT']"""
 import sys, json
 

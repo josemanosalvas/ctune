@@ -94,7 +94,7 @@ def compare(old="previous", new="latest"):
 
 
 def bios_search(query, name="latest", limit=60, include_hidden=False):
-    """Search the decoded BIOS settings of a snapshot by menu path / prompt text (case-insensitive)."""
+    """Search the decoded BIOS settings of a snapshot by menu path or prompt text (case-insensitive)."""
     p = os.path.join(resolve(name), "decoded", "bios_settings.json")
     with open(p) as f:
         settings = json.load(f)["settings"]
@@ -115,7 +115,7 @@ def bios_search(query, name="latest", limit=60, include_hidden=False):
 
 
 def verify(name="latest", write=True):
-    """BIOS configuration vs running hardware for a snapshot; also writes verify.md into the snapshot."""
+    """Compare a snapshot's BIOS configuration with the running hardware; also writes verify.md into the snapshot."""
     from ctune.mem import verify as _v
     d = resolve(name)
     md = _v.verify_md(d)

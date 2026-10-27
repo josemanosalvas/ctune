@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
-"""Dump firmware buffers that sit in e820 'Reserved' memory (readable via /dev/mem without iomem=relaxed).
+"""Dump firmware buffers in e820 'Reserved' memory (readable through /dev/mem without iomem=relaxed).
 
 Run as root:  python3 -I dump_fw_mem.py OUTDIR [--owner UID:GID]
- * HiiDB: AMI exports the whole HII database (IFR forms + strings of every BIOS setup page) and publishes
-   {UINT32 size, UINT32 phys_addr} in the EFI variable HiiDB-1b838190-.... Needed to decode the Setup /
-   AmdSetup / AOD_SETUP / Profile variables exactly for the running BIOS version.
+ * HiiDB: AMI exports the whole HII database (the IFR forms and strings of every BIOS setup page) and publishes
+   {UINT32 size, UINT32 phys_addr} in the EFI variable HiiDB-1b838190-.... Decoding the Setup,
+   AmdSetup, AOD_SETUP and Profile variables exactly for the running BIOS version needs it.
  * AmiNbMemAddrData: AMI north-bridge memory info buffer (layout unknown; saved raw).
- * A signature scan (APOB / AODT) of the Reserved range that holds those buffers.
+ * A signature scan (APOB, AODT) of the Reserved range that holds those buffers.
 Read-only; reads page by page and skips pages the kernel refuses.
 """
 import os, struct, sys

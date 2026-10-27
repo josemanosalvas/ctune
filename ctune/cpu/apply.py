@@ -5,16 +5,17 @@
   apply.py --state FILE [--owner UID:GID] --core N --margin M            set one core (MP1 0x35), read it back
   apply.py --state FILE [--owner UID:GID] --reset                        restore the cores ctune changed this boot
 
-Writes are refused unless this boot's probe read back the expected (BIOS) margin on every core, the core still holds
-the value ctune last left there, and the change stays within -30..30 and 5 per step. Margins last until reboot.
-The command IDs and encoding are cited in ctune/cpu/smu.py.
+The helper refuses a write unless this boot's probe read back the expected (BIOS) margin on every core, the core
+still holds the value ctune last left there, and the change stays within -30 to 30 and 5 per step. Margins last until
+reboot. ctune/cpu/smu.py cites the sources for the command IDs and the encoding.
 
 `ctune passwordless` installs this file and smu.py, owned by root, in /usr/local/libexec/ctune/cpu, and a polkit rule
 lets one user run it through pkexec with no password (docs/design.md section 2). Any process running as
 that user can then call it, so the installed copy keeps its state in the root-owned /run/ctune (cleared at boot) and
-refuses --state and --owner: a state file the caller could write would let it skip the probe and value checks.
-Calls take an exclusive lock, so two at once cannot lose a margin from the state. The guardrails bind each call: a
-caller that loops can still walk a core across the whole -30..30 range in steps of 5, and that range is the cap.
+refuses --state and --owner, because a state file the caller could write would let it skip the probe and value
+checks. Each call takes an exclusive lock, so two calls at once cannot lose a margin from the state. The guardrails
+limit each call on its own, so a caller that loops can still move a core across the whole range from -30 to 30 in
+steps of 5. That range is the cap.
 """
 import argparse
 import fcntl
