@@ -14,7 +14,7 @@ def load(d):
 
 
 def vtt(s):
-    """IT8792E in1 'DDRVTT AB' (VDIMM/2 while BIOS DRAM Termination = Auto); older snapshots only have sensors -j."""
+    """IT8792E in1 'DDRVTT AB' (VDIMM/2 while BIOS DRAM Termination is Auto); older snapshots only have sensors -j."""
     if s.get("vtt_proxy"):
         return s["vtt_proxy"]["in1_V"]
     try:
@@ -46,8 +46,8 @@ def tol(k):
 
 def main(old_dir, new_dir):
     a, b = load(old_dir), load(new_dir)
-    L = [f"# RAM snapshot diff", "", f"- OLD: {a['meta']['captured']} BIOS {a['meta']['bios_version']} - {old_dir}",
-         f"- NEW: {b['meta']['captured']} BIOS {b['meta']['bios_version']} - {new_dir}", ""]
+    L = [f"# RAM snapshot diff", "", f"- OLD: {a['meta']['captured']} BIOS {a['meta']['bios_version']}, {old_dir}",
+         f"- NEW: {b['meta']['captured']} BIOS {b['meta']['bios_version']}, {new_dir}", ""]
 
     L += ["## Platform", "", "| Item | Old | New |", "|---|---|---|"]
     for k in ("bios_version", "bios_date", "smu_fw", "microcode", "kernel", "ryzen_smu_drv"):
@@ -90,9 +90,10 @@ def main(old_dir, new_dir):
         L.append(f"VTT old {va} / new {vb} (missing)")
     else:
         steps = round((vb - va) / 0.0109)
-        L.append(f"VTT old {va:.3f} V ({round(va / 0.0109)} counts, VDIMM ~{va * 2.02:.2f} V) / new {vb:.3f} V "
-                 f"({round(vb / 0.0109)} counts, VDIMM ~{vb * 2.02:.2f} V)"
-                 + (f" - **changed by {steps:+d} ADC steps (~{steps * 22:+d} mV VDIMM)**" if abs(steps) >= 2 else " - same"))
+        L.append(f"VTT old {va:.3f} V ({round(va / 0.0109)} counts, VDIMM about {va * 2.02:.2f} V) / new {vb:.3f} V "
+                 f"({round(vb / 0.0109)} counts, VDIMM about {vb * 2.02:.2f} V)"
+                 + (f": **changed by {steps:+d} ADC steps (about {steps * 22:+d} mV VDIMM)**" if abs(steps) >= 2
+                    else ": same"))
         L.append("(Only meaningful while BIOS 'DRAM Termination (CH A/B)' is Auto; confirm in BIOS PC Health.)")
 
     L += ["", "## Platform fingerprint (non-memory BIOS settings)", ""]

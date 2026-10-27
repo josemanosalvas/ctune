@@ -1,21 +1,21 @@
 #!/usr/bin/env python3
-"""Independent verifier for the HII/efivar decode (does not import hii_ifr.py / bios_settings_decode.py).
+"""Independent verifier for the HII and efivar decode (it imports neither hii_ifr.py nor bios_settings_decode.py).
 
-Format sources (UEFI Spec 2.10 + EDK2 headers):
-  * EFI_HII_PACKAGE_LIST_HEADER / EFI_HII_PACKAGE_HEADER  -- UEFI 2.10 s33.3.1
+Format sources (UEFI Spec 2.10 and the EDK2 headers):
+  * EFI_HII_PACKAGE_LIST_HEADER and EFI_HII_PACKAGE_HEADER, UEFI 2.10 s33.3.1
       (EDK2 MdePkg/Include/Uefi/UefiInternalFormRepresentation.h: EFI_HII_PACKAGE_HEADER is
        UINT32 Length:24, Type:8; EFI_HII_PACKAGE_FORMS=0x02, EFI_HII_PACKAGE_STRINGS=0x04, END=0xDF)
-  * String package + SIBT_* blocks                       -- UEFI 2.10 s33.3.6
+  * String package and SIBT_* blocks, UEFI 2.10 s33.3.6
       (same header: SIBT_END 0x00, STRING_SCSU 0x10.._FONT 0x11, STRINGS_SCSU 0x12.._FONT 0x13,
        STRING_UCS2 0x14, .._FONT 0x15, STRINGS_UCS2 0x16, .._FONT 0x17, DUPLICATE 0x20,
        SKIP2 0x21, SKIP1 0x22, EXT1 0x30, EXT2 0x31, EXT4 0x32)
-  * IFR opcodes / EFI_IFR_OP_HEADER (Length:7, Scope:1)   -- UEFI 2.10 s33.3.8
+  * IFR opcodes and EFI_IFR_OP_HEADER (Length:7, Scope:1), UEFI 2.10 s33.3.8
       EFI_IFR_QUESTION_HEADER = Prompt,Help,QuestionId,VarStoreId,VarOffset (UINT16 each) + Flags(UINT8)
       ONE_OF 0x05 / NUMERIC 0x07: + Flags(UINT8; EFI_IFR_NUMERIC_SIZE=0x03) + MinMaxData
       ONE_OF_OPTION 0x09: Option(STRING_ID) Flags(UINT8; DEFAULT=0x10, DEFAULT_MFG=0x20) Type(UINT8) Value
       VARSTORE 0x24: Guid, VarStoreId(UINT16), Size(UINT16), Name(CHAR8[])
       VARSTORE_EFI 0x26: VarStoreId(UINT16), Guid, Attributes(UINT32), Size(UINT16), Name(CHAR8[])
-  * efivarfs file = UINT32 attributes + data  (Linux Documentation/filesystems/efivarfs.rst)
+  * efivarfs file: UINT32 attributes, then the data (Linux Documentation/filesystems/efivarfs.rst)
 
 Usage: CTUNE_SNAPSHOT=data/snapshots/<name> python3 -I verify_hii_settings.py [OUT.json]. The other verify_* tools
 import this module and read the same snapshot.
@@ -42,7 +42,7 @@ def guid(b):
 
 
 def parse_strings(pkg):
-    """pkg = whole string package incl. 4-byte header. Returns (lang, {id: str})."""
+    """pkg is the whole string package, including the 4-byte header. Returns (lang, {id: str})."""
     hdr_size, info_off = struct.unpack_from("<II", pkg, 4)
     lang_end = pkg.index(b"\0", 4 + 4 + 4 + 32 + 2)
     lang = pkg[4 + 4 + 4 + 32 + 2:lang_end].decode("ascii")
@@ -106,7 +106,7 @@ def parse_strings(pkg):
         elif t == 0x22:  # SKIP1
             sid += pkg[p]
             p += 1
-        elif t == 0x30:  # EXT1: BlockType2, Length(UINT8) -- length covers whole block
+        elif t == 0x30:  # EXT1: BlockType2, Length(UINT8); the length covers the whole block
             ln = pkg[p + 1]
             p = p - 1 + ln
         elif t == 0x31:

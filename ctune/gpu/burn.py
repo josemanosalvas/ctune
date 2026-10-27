@@ -8,11 +8,11 @@ vkpeak only measures, and an unstable undervolt can pass it with silent compute 
 
 Facts from the gpu-burn source at the pinned commit (research notes in docs/research/reuse-tools.md):
 - It always exits 0, OK or FAULTY (issue #12), so the verdict comes from its output only.
-- Fewer than 2 result slots means nothing is compared: -m must be at least 1024 MB (FP32) or 2048 MB (FP64).
+- With fewer than 2 result slots gpu-burn compares nothing, so -m must be at least 1024 MB (FP32) or 2048 MB (FP64).
 - The printed error counters reset every 10 %; the final "GPU 0: OK/FAULTY" line keeps any fault.
 - Inside the container gpu_burn is PID 1 and ignores signals without --init (pid_namespaces(7)).
-- A worker keeps two batches in flight (gpu_burn-drv.cpp L353-367): a frozen host process stops the GPU only after
-  both finish. At 8 GiB a FP32 batch is 30 products, about 1.2 s, so the transient run uses TRANSIENT_MB.
+- A worker keeps two batches in flight (gpu_burn-drv.cpp L353-367), so a frozen host process stops the GPU only
+  after both finish. At 8 GiB a FP32 batch is 30 products, about 1.2 s, so the transient run uses TRANSIENT_MB.
 """
 import os
 import re
@@ -33,7 +33,7 @@ MIN_MB = {"fp32": 1024, "tc": 1024, "fp64": 2048, "transient": 1024}
 # FP64 batches take about 30 s at 8 GB: shorter runs compare nothing. A transient run needs a few pause cycles.
 MIN_SECONDS = {"fp32": 30, "tc": 30, "fp64": 90, "transient": 60}
 FLAGS = {"fp32": [], "tc": ["-tc"], "fp64": ["-d"], "transient": []}
-TRANSIENT_MB = 1024     # two compared slots, so a batch takes about 0.1 s and a 1 s pause really idles the GPU
+TRANSIENT_MB = 1024     # two compared slots, so a batch takes about 0.1 s and a 1 s pause idles the GPU
 RUN_S, PAUSE_S = 9, 1   # cpu_test's pattern (CoreCycler's suspendPeriodically): 9 s of load, then 1 s frozen
 BUSY = f"another gpu-burn container ({NAME}) exists: another ctune test is using the GPU"
 
@@ -112,8 +112,9 @@ class Pauser(threading.Thread):
     """Load transients: freezes the gpu-burn container for pause_s in every run_s + pause_s, as cpu_test suspends
     mprime. In each pause the GPU drops to idle and boosts toward the top of its V/F curve; the thaw steps it back to
     full load at that clock, where undervolts tend to crash. `podman pause` is the cgroup freezer, so every process in
-    the container stops at once; a stop signal sent while frozen lands after the thaw. mark("paused" | "load") tags
-    the telemetry. It never freezes within tail_s of gpu-burn's own timer, so the final verdict line is printed."""
+    the container stops at once, and a stop signal sent while it is frozen arrives after the thaw. mark("paused") and
+    mark("load") tag the telemetry. It never freezes within tail_s of gpu-burn's own timer, so the final verdict line
+    is printed."""
 
     def __init__(self, load, seconds, cidfile, run_s=RUN_S, pause_s=PAUSE_S, tail_s=15, mark=None):
         super().__init__(daemon=True)

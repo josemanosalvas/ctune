@@ -1,15 +1,15 @@
 ---
 name: ctune
-description: Hardware tuning campaigns with ctune. Use when planning or running a RAM, GPU or CPU tuning step (timings, FCLK, Curve Optimizer, undervolt, clock or memory offsets, power limits), verifying what was applied, comparing before and after a BIOS update, or diagnosing instability.
+description: Use for ctune tuning campaigns on RAM timings and FCLK, the CPU Curve Optimizer, or GPU undervolt, offsets and power limit, when planning, applying, testing or signing off a step, after a BIOS update, or when diagnosing a crash or instability.
 ---
 
 # ctune
 
 You run a **campaign** in one **domain** (mem, gpu or cpu): a chain of single-variable **steps**, each applied, verified, tested and recorded in the journal. The tools are the `ctune` MCP server, or `bin/ctune <command>` from the repo root. Read the domain's reference before planning:
-- mem: [RAM and fabric rules](reference/mem-zen3-ddr4.md), [test protocol](reference/mem-test-protocol.md)
+- mem: [RAM and fabric rules](reference/mem-zen3-ddr4.md)
 - cpu: [Curve Optimizer](reference/cpu-curve-optimizer.md)
 - gpu: [NVIDIA undervolt and overclock](reference/gpu-nvidia.md)
-- all: the machine's facts and history in `data/this-machine.md` (local, gitignored). On a new machine, create it from [the template](reference/this-machine.template.md) and fill it in from `status`, the first snapshots and the user; keep it current as campaigns find limits.
+- all: the [test protocol](reference/test-protocol.md) (screens, sign-off, coverage, a quiet GPU), and this machine's facts in `data/this-machine.md` (local, gitignored). On a new machine, create that file from [the template](reference/this-machine.template.md); keep it current as campaigns find limits.
 
 ## A step
 
@@ -19,18 +19,19 @@ You run a **campaign** in one **domain** (mem, gpu or cpu): a chain of single-va
    - mem: the user types the values in the BIOS and reboots. Give them the menu path from `mem_bios_search`.
    - cpu: `cpu_probe` once per boot, then `cpu_apply` for one core.
    - gpu: call `gpu_apply`.
-   A tool whose description says root opens a password prompt; tell the user before each such call. Once `ctune passwordless` is installed, GPU apply and reset, CPU probe, apply and reset, and `mem_snapshot` need none, so campaigns run unattended; only `gpu_persist` and `gpu_unpersist` still prompt. Done when the change is in place, or the user reports a failed boot.
+   With `ctune passwordless` installed, every per-step root tool runs unattended; otherwise a root tool opens a password prompt on the machine's screen, so tell the user first. Done when the change is in place, or the user reports a failed boot.
 4. **Verify.**
-   - mem: `mem_snapshot`, then `mem_verify` (BIOS configuration against the running hardware) and `mem_compare` against the baseline snapshot. After a BIOS flash, `mem_checklist` on the last pre-flash snapshot lists what to re-enter. If the first new snapshot returns `bios_key_problems`, a key setting changed its menu location: fix `KEY` in `bios_settings_decode.py` before trusting its focused table.
+   - mem: `mem_snapshot`, then `mem_verify` (BIOS configuration against the running hardware) and `mem_compare` against the baseline snapshot. After a BIOS flash, `mem_checklist` on the last pre-flash snapshot lists what to re-enter. If the first new snapshot returns `bios_key_problems`, a key setting changed its menu location, so fix `KEY` in `bios_settings_decode.py` before trusting its focused table.
    - cpu: the `cpu_apply` readback equals the planned margin, and `cpu_status` shows it with `co_source` ctune.
    - gpu: `gpu_status`; the readback and `applied_by_ctune` show the new values.
    Done when every planned value is confirmed and every other difference is explained. A reverted or mismatched setting makes the step **red**.
 5. **Test.**
-   - mem: `mem_test` (screen, or fabric for FCLK steps and after a BIOS flash), then `errors` after 300 s.
-   - cpu: `cpu_test` with `cores` set to the changed core, then `errors` after 300 s.
-   - gpu: `gpu_test` (screen, about 36 min). A part listed in `clock_stretch.stretched` counts as a lower score.
-   **Green** means no crash, zero corrected machine-check errors, no new Xid or load errors, and a score at least as good as the baseline's, within about 1 %. The cpu score is `eff_ghz_avg` of the `p95` phase of the same core, compared only with a baseline result of the same `workload`. **Red** means anything else, and you record the error source. **Inconclusive** means the test could not run or was too short to judge (`blocked_by` or the result's `inconclusive` says why): fix that and run it again, with no rollback.
-6. **Decide.** Write a `result` entry. Green becomes the new baseline. Red rolls back to the baseline value (`cpu_apply`, `gpu_apply` or the BIOS) and records the limit. A campaign ends with a **sign-off** of its final configuration: `signoff` (about 5 h 30 min, detached, poll `test_status`), then a few days of the user's real workload. After a green sign-off of a GPU campaign, `gpu_persist` re-applies its settings at every boot (root, password prompt). It refuses settings no green sign-off covers, so experiments never persist.
+   - mem: `mem_test` (screen, or fabric for FCLK steps and after a BIOS flash).
+   - cpu: `cpu_test` with `cores` set to the changed core.
+   - gpu: `gpu_test` screen. A part listed in `clock_stretch.stretched` counts as a lower score.
+   Wait 300 s after the test ends, then call `errors`. Done when the verdict below is decided.
+   **Green** means no crash, zero corrected machine-check errors, no new Xid or load errors, and a score at least as good as the baseline's, within about 1 %. The cpu score is `eff_ghz_avg` of the `p95` phase of the same core, compared only with a baseline result of the same `workload`. **Red** means anything else, and you record the error source. **Inconclusive** means the test could not run or was too short to judge (`blocked_by` or the result's `inconclusive` says why). Fix that and run it again, with no rollback.
+6. **Decide.** Write a `result` entry. Green becomes the new baseline. Red rolls back to the baseline value (`cpu_apply`, `gpu_apply` or the BIOS) and records the limit. A campaign ends with a **sign-off** of its final configuration (`signoff`, see the test protocol), then a few days of the user's real workload. After a green sign-off of a GPU campaign, `gpu_persist` re-applies its settings at every boot (it runs as root and always asks for a password); it refuses settings no green sign-off covers.
 
 ## Guardrails
 

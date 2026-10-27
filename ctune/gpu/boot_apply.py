@@ -4,7 +4,7 @@
 `ctune gpu persist` installs a root-owned copy as /usr/local/libexec/ctune/gpu-boot-apply, beside a pinned
 nvidia_oc build, and writes /etc/ctune/gpu.json. ctune-gpu-persist.service runs it at boot and
 ctune-gpu-persist-resume.service after suspend. It uses the standard library only and imports nothing from the
-repo: the user can write the repo, and this runs as root without a password prompt.
+repo, because the user can write the repo and this runs as root without a password prompt.
 
 /etc/ctune/gpu.json: {"settings": {"core_offset": MHz, "mem_offset": MHz, "max_clock": MHz or null,
 "power_limit": W or null}, "gpu_uuid": ..., "driver": ..., "signoff": {...}, "persisted": ...}
@@ -22,8 +22,8 @@ The power limit and the clock lock go first, then the offsets, so a failure neve
 clock cap. nvidia_oc stops at the first failing setter, so on any failure, or on a readback that differs, the GPU
 goes back to stock: offsets 0, clocks unlocked, default power limit.
 
-Every run except --once writes its result to /run/ctune/gpu-persist.json, which `ctune gpu status` reads. Exit 1
-when the apply or its readback failed; a skip exits 0 and logs a warning.
+Every run except --once writes its result to /run/ctune/gpu-persist.json, which `ctune gpu status` reads. It exits
+1 when the apply or its readback failed; a skip exits 0 and logs a warning.
 """
 import argparse
 import json
@@ -77,7 +77,7 @@ def out_of_caps(s):
     errs = []
     for k, cap in (("core_offset", CAP_CORE), ("mem_offset", CAP_MEM), ("max_clock", CAP_CLOCK)):
         if s.get(k) is not None and not cap[0] <= int(s[k]) <= cap[1]:
-            errs.append(f"{k} {s[k]} is outside ctune's cap {cap[0]}..{cap[1]}")
+            errs.append(f"{k} {s[k]} is outside ctune's cap {cap[0]} to {cap[1]}")
     return errs
 
 

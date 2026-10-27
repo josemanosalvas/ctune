@@ -4,7 +4,7 @@
   apply.py --state FILE [--owner UID:GID] [--core-offset MHZ] [--mem-offset MHZ] [--max-clock MHZ] [--power-limit W]
   apply.py --state FILE --reset
 
-Values outside the NVML-reported range or the ctune caps are rejected before anything is written.
+The helper rejects values outside the NVML-reported range or the ctune caps before it writes anything.
 Settings last until reboot or driver reload.
 """
 import argparse
@@ -27,7 +27,7 @@ def main():
     ap.add_argument("--owner", default="")
     ap.add_argument("--core-offset", type=int)
     ap.add_argument("--mem-offset", type=int)
-    ap.add_argument("--max-clock", type=int, help="lock the core clock to 0..MHZ (the undervolt knob)")
+    ap.add_argument("--max-clock", type=int, help="lock the core clock to the range 0 to MHZ (the undervolt setting)")
     ap.add_argument("--power-limit", type=float)
     ap.add_argument("--reset", action="store_true")
     a = ap.parse_args()
@@ -39,7 +39,7 @@ def main():
     def check(label, v, nvml_range, cap):
         lo, hi = max(nvml_range[0], cap[0]), min(nvml_range[1], cap[1])
         if not lo <= v <= hi:
-            errors.append(f"{label} {v} outside allowed range {lo}..{hi}")
+            errors.append(f"{label} {v} outside allowed range {lo} to {hi}")
 
     if a.reset:
         plan = {"core_offset": 0, "mem_offset": 0, "max_clock": None,

@@ -346,7 +346,7 @@ def _result(ts, offset, lock, fp64, fp32, verdict="green"):
 
 class ClockStretch(unittest.TestCase):
     """Too little voltage makes Ampere stretch its clock: NVML still shows the requested MHz, but less work gets done
-    per MHz. In these fixtures step 3 (+70 at 1905 MHz) has no error, yet FP64 falls from 519 to 497 GFLOPS at the
+    per MHz. In these fixtures step 3 (+70 MHz at 1905 MHz) has no error, yet FP64 falls from 519 to 497 GFLOPS at the
     same 1905 MHz; nothing but the work per MHz shows it."""
 
     STOCK = _result("2026-10-27T17:40:05+0100", None, None, (542, 1988), (26438, 1682))
@@ -383,8 +383,8 @@ class ClockStretch(unittest.TestCase):
 
 
 class Graphics(unittest.TestCase):
-    """Quake II RTX as the graphics/RT part: it checks nothing it renders, so it is red only on a crash, a lost
-    device, a hang or an Xid, and inconclusive when it cannot run."""
+    """Quake II RTX as the graphics and RT part: it checks nothing it renders, so it is red only on a crash, a lost
+    device, a hang or an Xid error, and inconclusive when it cannot run."""
 
     def test_durations_are_checked_before_anything_runs(self):
         from ctune.core import stress

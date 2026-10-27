@@ -1,4 +1,4 @@
-"""GPU (NVIDIA) tuning API: status, apply/reset (root helper via pkexec), tests with telemetry, Xid errors."""
+"""GPU (NVIDIA) tuning API: status, apply and reset (a root helper through pkexec), tests with telemetry, Xid errors."""
 import json
 import os
 import re
@@ -162,8 +162,8 @@ SETTLED_S = 60   # temp_c_end and fan_pct_end average a part's last 60 samples (
 
 
 class _Sampler(threading.Thread):
-    """1 Hz NVML telemetry during a test, tagged with the running part (fp32, fp64, tc, transient, graphics, vram,
-    vkpeak; transient:paused while a transient run is frozen)."""
+    """NVML telemetry once a second during a test, tagged with the running part (fp32, fp64, tc, transient,
+    graphics, vram, vkpeak; transient:paused while a transient run is frozen)."""
 
     def __init__(self):
         super().__init__(daemon=True)
@@ -206,7 +206,8 @@ class _Sampler(threading.Thread):
 def _part_telemetry(sampler, part, max_clock=None):
     """One part's telemetry. A transient run's frozen seconds are kept apart: their clock is where the GPU boosted
     to while idle, so each thaw stepped the load back on at that clock. Their power is left out: NVML averages it
-    over 1 s, so it mostly shows the load before the pause (5 Hz instant power showed ~120 W in each pause)."""
+    over 1 s, so it mostly shows the load before the pause (instant power sampled at 5 Hz showed about 120 W in each
+    pause)."""
     out = sampler.summary(part, max_clock)
     paused = sampler.summary(f"{part}:paused", max_clock)
     if paused:
@@ -354,7 +355,7 @@ def _temp_guard(h):
 
 def _graphics(seconds, h):
     """Quake II RTX timedemo passes (RT cores, texture units, a compute denoiser): red on a crash, a lost device or a
-    hang, inconclusive when it cannot run here."""
+    hang, and inconclusive when it cannot run on this machine."""
     why = q2rtx.unavailable()
     if why:
         return {"ok": False, "unavailable": True, "errors": [why]}
@@ -369,7 +370,7 @@ def _parts(res):
 
 def _verdict(res, new_xid):
     """(green, red or inconclusive; what blocked it). A part that could not run makes the test inconclusive (fix it
-    and run again), unless another part failed or an Xid error came: then it is red."""
+    and run again), unless another part failed or an Xid error appeared, which makes it red."""
     parts = _parts(res)
     failed = [p for p in parts if not p["ok"] and not p.get("unavailable")]
     blocked = [p["errors"][0] for p in parts if not p["ok"] and p.get("unavailable")]
@@ -397,7 +398,7 @@ def _burn(mode, seconds, h, mark=None):
         try:
             if pauser:
                 pauser.start()
-            r = stress.run_loads([ld], seconds + 15, on_tick=lambda: _temp_guard(h))   # + gpu-burn's -stts and start-up
+            r = stress.run_loads([ld], seconds + 15, on_tick=lambda: _temp_guard(h))   # for gpu-burn's -stts and start-up
         finally:
             if pauser:
                 pauser.stop.set()
@@ -439,7 +440,7 @@ def clock_stretch(res, records):
     """Clock stretching: short of voltage, Ampere keeps the requested clock while its effective clock falls, so NVML
     shows the same MHz and less work gets done per MHz. Compares GFLOPS per MHz of each steady gpu-burn part (fp32,
     fp64, tc) with the last green gpu result at the same max_clock; `stretched` lists the parts that fell more than
-    STRETCH_PCT. It does not change the verdict: the step is judged on score (SKILL.md, step 5)."""
+    STRETCH_PCT. It does not change the test's verdict; the agent judges the step on its score (SKILL.md, step 5)."""
     lock = _lock(res.get("settings"))
     # a stretched result stays green (the verdict is on errors), so it is skipped: the baseline never drifts down
     base = next((r for r in reversed(records) if r.get("domain") == "gpu" and r.get("kind") == "result"
@@ -462,10 +463,11 @@ KINDS = ("core", "vram", "screen", "graphics", "vkpeak")
 def test(kind="screen", burn_seconds=600, fp64_seconds=600, tc_seconds=120, transient_seconds=180,
          graphics_seconds=300, vram_seconds=300, core_runs=3, budget_bytes=None, note="", record=True):
     """kind: 'core' (gpu-burn, every result checked: FP32 SGEMM, then FP64, tensor cores, and FP32 frozen 1 s in
-    every 10 for load transients, each run if its seconds > 0), 'graphics' (Quake II RTX: RT cores and the lock at
-    high power; nothing checked but crashes, lost devices and hangs), 'vram' (memtest_vulkan), 'screen' (core, then
+    every 10 for load transients, each run when its seconds are above 0), 'graphics' (Quake II RTX: RT cores and
+    the lock at high power; nothing checked but crashes, lost devices and hangs), 'vram' (memtest_vulkan), 'screen'
+    (core, then
     graphics, then vram), or 'vkpeak' (throughput score only, nothing checked).
-    Green = every part ok, no new Xid errors, the temperature guardrail not hit, no crash."""
+    Green means every part passed, no new Xid errors, the temperature guardrail not hit, and no crash."""
     if kind not in KINDS:
         raise ValueError(f"kind is one of {', '.join(KINDS)}")
     durations = {"fp32": burn_seconds, "fp64": fp64_seconds, "tc": tc_seconds, "transient": transient_seconds}
@@ -480,11 +482,12 @@ def test(kind="screen", burn_seconds=600, fp64_seconds=600, tc_seconds=120, tran
     if kind == "vkpeak" and core_runs < 1:
         raise ValueError("kind vkpeak needs core_runs of 1 or more")
     if 0 < graphics_seconds < q2rtx.MIN_SECONDS:
-        raise ValueError(f"graphics_seconds {graphics_seconds} < {q2rtx.MIN_SECONDS}: not one full pass")
+        raise ValueError(f"graphics_seconds {graphics_seconds} is below {q2rtx.MIN_SECONDS}: not one full pass")
     if kind in ("core", "screen"):
         if not any(durations.values()):
             raise ValueError("core and screen need at least one gpu-burn duration above 0")
-        short = [f"{m} {v} s < {burn.MIN_SECONDS[m]} s" for m, v in durations.items() if 0 < v < burn.MIN_SECONDS[m]]
+        short = [f"{m} {v} s is below {burn.MIN_SECONDS[m]} s"
+                 for m, v in durations.items() if 0 < v < burn.MIN_SECONDS[m]]
         if short:
             raise ValueError(f"gpu-burn runs too short to compare anything: {', '.join(short)}")
     stress.check_interrupted()

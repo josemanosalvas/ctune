@@ -1,7 +1,7 @@
-"""Append-only tuning journal (JSON lines): one record per plan / applied check / test result / note.
+"""Append-only tuning journal (JSON lines): one record per plan, applied check, test result or note.
 
-The journal is the memory of a tuning campaign: what was tried, what the BIOS actually applied,
-what the tests and error counters said. Every decision about the next step should be derivable from it.
+The journal records a tuning campaign: what was tried, what the BIOS applied, and what the tests and
+error counters said. The next step should follow from it alone.
 """
 import json
 import os

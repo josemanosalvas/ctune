@@ -1,6 +1,6 @@
 # Curve Optimizer (Zen 3, runtime through the SMU)
 
-Curve Optimizer (CO) shifts each core's voltage/frequency curve by a **margin**. A negative margin means less voltage at every clock, about 3 to 5 mV per count. When a probe or a readback does not match, or before you change the SMU code, read `docs/research/cpu-co-smu.md` for the command IDs, the encoding and the sources.
+Curve Optimizer (CO) shifts each core's voltage-frequency curve by a **margin**. A negative margin means less voltage at every clock, about 3 to 5 mV per count. When a probe or a readback does not match, or before you change the SMU code, read `docs/research/cpu-co-smu.md` for the command IDs, the encoding and the sources.
 
 ## Probe mismatch
 `cpu_probe` compares the SMU's margins with the BIOS values in the latest mem snapshot. A mismatch has two causes:
@@ -17,8 +17,8 @@ Curve Optimizer (CO) shifts each core's voltage/frequency curve by a **margin**.
 
 ## Testing
 CO errors show up in single-thread boost and in load-to-idle transitions. All-core loads run lower clocks with more voltage headroom, so they miss most of them. `cpu_test` therefore runs Prime95 (mprime) on one thread per core, the way CoreCycler does, and suspends it for 1 s in every 10 so the core keeps dropping out of boost and coming back.
-- **Workload.** Use `sse-huge` (the default) for every step: it makes the least heat, so the core boosts highest. Run `avx2-1344k` once on a core's final value, as the heavy-load check. `full_cycle` runs a core until every FFT length has passed once (up to 40 min); use it for the last check of a core before the sign-off. Judge both on errors and machine-check counts only, not on clocks: AVX2 boosts lower by design.
-- **Time.** One core takes about 6 minutes and all eight about 50, so tell the user before a long run.
+- **Workload.** Use `sse-huge` (the default) for every step. It makes the least heat, so the core boosts highest. Run `avx2-1344k` once on a core's final value, as the heavy-load check. `full_cycle` runs a core until every FFT length has passed once (up to 40 min); use it for the last check of a core before the sign-off. Judge both only on errors and machine-check counts, because AVX2 boosts lower by design.
+- **Time.** One core takes about 6 minutes and all eight about 50.
 
 A step is **red** on any of these:
 - An mprime error: `FATAL ERROR`, a hardware failure at an FFT size (`failed_size_k`), or a warning in the summary. Also an mprime that exits on its own, or threads that left the core (`affinity_ok` false).

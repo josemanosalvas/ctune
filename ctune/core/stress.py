@@ -72,7 +72,7 @@ def _alive(pid):
 
 
 def user_env():
-    """Environment for systemctl/systemd-run --user, also when the caller has no session variables."""
+    """Environment for systemctl --user and systemd-run --user, also when the caller has no session variables."""
     env = dict(os.environ)
     env.setdefault("XDG_RUNTIME_DIR", f"/run/user/{os.getuid()}")
     return env
@@ -99,8 +99,8 @@ def unit_state(unit):
 
 
 def running(boot=None):
-    """The marker of a test running right now in this boot, or None. A detached run (systemd user unit) is running
-    while its unit is active with the same invocation; an inline run while its process is alive."""
+    """The marker of a test running now in this boot, or None. A detached run (a systemd user unit) is running while
+    its unit is active with the same invocation, and an inline run while its process is alive."""
     m = marker_read()
     if not m or m.get("boot_id") != (boot or boot_id()):
         return None
@@ -235,7 +235,7 @@ class _Run:
             marker_write(self.state)
 
     def _nested(self, path, **kw):
-        """A nested test's phase, e.g. sub = "co-cycle:fft" under the signoff phase "cpu"."""
+        """A nested test's phase, for example sub = "co-cycle:fft" under the signoff phase "cpu"."""
         if self.parent:
             self.parent._nested(f"{self.test}:{self.phase} > {path}", **kw)
         else:
@@ -364,7 +364,7 @@ def test_size_mb(reserve_mb=1536, share=1.0):
 
 # ---------------------------------------------------------------- loads
 class Load:
-    """A background stress process with an output parser: parse(rc, output, stopped_by_us) -> dict with 'ok'."""
+    """A background stress process with an output parser. parse(rc, output, stopped_by_us) returns a dict with 'ok'."""
 
     def __init__(self, name, cmd, parse, cwd=None, stop_signal=signal.SIGINT, self_timed=False, optional=False):
         self.name, self.cmd, self.parse, self.cwd, self.stop_signal = name, cmd, parse, cwd, stop_signal
@@ -435,7 +435,7 @@ def run_loads(loads, seconds, check_every=5, on_tick=None):
         t_end = t0 + seconds
         while time.time() < t_end and not early:
             time.sleep(min(check_every, max(0, t_end - time.time())))
-            why = on_tick() if on_tick else None   # a guardrail can end the phase, e.g. a temperature limit
+            why = on_tick() if on_tick else None   # a guardrail can end the phase, for example a temperature limit
             if why:
                 early = early or why
             for ld in loads:
@@ -580,7 +580,7 @@ class DiskReader:
 # ---------------------------------------------------------------- telemetry
 class Telemetry(threading.Thread):
     """Samples every `interval` s: board voltages, CPU Tctl, per-core max temperature and package power from the
-    pm_table, GPU temperature and power, and swap-out. summary() gives min / avg / max per series."""
+    pm_table, GPU temperature and power, and swap-out. summary() gives the minimum, average and maximum per series."""
 
     def __init__(self, interval=5.0):
         super().__init__(daemon=True)

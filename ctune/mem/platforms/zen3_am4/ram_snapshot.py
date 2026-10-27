@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Snapshot the live DDR4 / Infinity Fabric configuration of a Zen3 AM4 system (ZenTimings-style).
+"""Snapshot the live DDR4 and Infinity Fabric configuration of a Zen3 AM4 system, the way ZenTimings shows it.
 
 Run as root:  python3 -I ram_snapshot.py [--out DIR] [--label TEXT] [--owner UID:GID]
 or as the user once `ctune passwordless` has installed collect_root.py: the reads that need root go through that
@@ -9,8 +9,9 @@ Writes DIR/<timestamp>_<bios>/{snapshot.json,snapshot.md,raw/*}. Compare two sna
 Read-only. Sources:
   * UMC registers over SMN via ryzen_smu (/sys/kernel/ryzen_smu_drv/smn), decoded by zen3_ddr4_decode.py
     (ZenStates-Core DDR4Dictionary map, cross-checked against CoreFreq).
-  * SMU pm_table (FCLK/UCLK/MCLK, VSOC, VDDP, VDDG, PPT/TDC/EDC) - ZenStates-Core PowerTable.cs offsets.
-  * SVI2 SoC telemetry (SMN 0x5A00C), dmidecode type 0/2/16/17, hwmon, AOD/APOB (only if /dev/mem allows).
+  * SMU pm_table (FCLK, UCLK, MCLK, VSOC, VDDP, VDDG, PPT, TDC, EDC), at the ZenStates-Core PowerTable.cs offsets.
+  * SVI2 SoC telemetry (SMN 0x5A00C), dmidecode types 0, 2, 16 and 17, hwmon, and the AOD and APOB buffers (only if
+    /dev/mem allows).
 """
 import argparse, base64, glob, importlib.util, json, os, re, statistics, struct, subprocess, sys, time
 
@@ -25,7 +26,7 @@ zdec = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(zdec)
 
 # pm_table 0x380905 (Vermeer). Bold rows in research/pmtable.md are confirmed by two sources
-# (ZenStates-Core PowerTable.cs L300 + ryzen_monitor); the rest are ryzen_monitor labels.
+# (ZenStates-Core PowerTable.cs L300 and ryzen_monitor); the rest are ryzen_monitor labels.
 PM_FIELDS = {
     0x380905: [
         ("PPT_limit_W", 0x000), ("TDC_limit_A", 0x008), ("THM_limit_C", 0x010), ("EDC_limit_A", 0x020),
@@ -42,7 +43,7 @@ PM_FIELDS = {
 def sh(cmd):
     try:
         return subprocess.run(cmd, capture_output=True, text=True, timeout=60).stdout
-    except Exception as e:  # tool missing etc.
+    except Exception as e:  # a missing tool or a similar failure
         return f"<error: {e!r}>"
 
 
@@ -56,7 +57,7 @@ def rd(path, binary=False):
 
 # ---------------------------------------------------------------- SMN
 def smn_read_many(addrs):
-    """4-byte write = read request (ryzen_smu drv.c). A failed read silently keeps the previous value,
+    """A 4-byte write is a read request (ryzen_smu drv.c). A failed read keeps the previous value without an error,
     so callers read everything twice and interleave a canary to detect stale results."""
     fd = os.open(SMN, os.O_RDWR)
     try:
@@ -77,7 +78,7 @@ def smn_read_many(addrs):
 
 def smn_snapshot():
     addrs = list(zdec.required_smn_addresses(channels=(0, 1), include_svi2=False))
-    # whole P-state-0 timing block + config block, so any BIOS change shows up even in undecoded regs
+    # the whole P-state-0 timing block and config block, so any BIOS change shows up even in undecoded registers
     for base in (0x050000, 0x150000):
         addrs += [base | o for o in range(0x200, 0x300, 4)]
         addrs += [base | o for o in range(0x000, 0x040, 4)]
@@ -142,10 +143,10 @@ def dmi_dimms(text):
     return dimms
 
 
-# ---------------------------------------------------------------- VDIMM proxy + platform fingerprint
+# ---------------------------------------------------------------- VDIMM proxy and platform fingerprint
 def vtt_proxy(sensors_json):
     """IT8792E in1 = 'DDRVTT AB' on the B550 AORUS PRO (LibreHardwareMonitor SuperIOHardware.cs). VTT tracks
-    VDIMM/2 only while BIOS 'DRAM Termination (CH A/B)' is Auto; ref board: VDIMM/VTT = 1.380/0.682 = 2.02."""
+    VDIMM/2 only while BIOS 'DRAM Termination (CH A/B)' is Auto. On the reference board VDIMM/VTT = 1.380/0.682 = 2.02."""
     try:
         chips = json.loads(sensors_json)
         v = next(c["in1"]["in1_input"] for k, c in chips.items() if k.startswith("it8792"))
@@ -189,7 +190,7 @@ def fingerprint():
 
 # ---------------------------------------------------------------- optional /dev/mem bits
 def bclk_mmio():
-    """FCH CGPLLConfig3 @0xFED80E10 (ZenStates-Core Mmio.cs). Raw value only + ZSC formula; may be EPERM."""
+    """FCH CGPLLConfig3 @0xFED80E10 (ZenStates-Core Mmio.cs). Only the raw value and the ZSC formula; the read may fail with EPERM."""
     import mmap
     try:
         fd = os.open("/dev/mem", os.O_RDONLY | os.O_SYNC)
@@ -230,7 +231,7 @@ def fmt(v):
 
 
 def render_md(s):
-    L = [f"# RAM snapshot - {s['meta']['captured']}  ({s['meta']['label']})", ""]
+    L = [f"# RAM snapshot {s['meta']['captured']}  ({s['meta']['label']})", ""]
     m = s["meta"]
     L += [f"- Board: {m['board']}, BIOS {m['bios_version']} ({m['bios_date']})",
           f"- CPU: {m['cpu']}, microcode {m['microcode']}, SMU fw {m['smu_fw']}, pm_table {s['pm_table']['version']}",
@@ -243,7 +244,7 @@ def render_md(s):
     if pf:
         g = lambda k: pf.get(k, {}).get("median")
         L.append(f"- FCLK / UCLK / MCLK: {fmt(g('FCLK_MHz'))} / {fmt(g('UCLK_MHz'))} / {fmt(g('MCLK_MHz'))} MHz "
-                 f"(DPM0 {fmt(g('FCLK_DPM0_MHz'))}/{fmt(g('UCLK_DPM0_MHz'))}/{fmt(g('MCLK_DPM0_MHz'))}) - "
+                 f"(DPM0 {fmt(g('FCLK_DPM0_MHz'))}/{fmt(g('UCLK_DPM0_MHz'))}/{fmt(g('MCLK_DPM0_MHz'))}), "
                  f"{'1:1:1 coupled' if g('UCLK_MHz') and g('MCLK_MHz') and abs(g('UCLK_MHz') - g('MCLK_MHz')) < 5 else 'UCLK != MCLK (2:1)'}")
         L.append(f"- VSOC: set {fmt(g('VSOC_set_V'))} V, telemetry {fmt(g('VSOC_V'))} V (pm_table); "
                  f"SVI2 {s['umc']['decoded']['vsoc_svi2']['VSOC_V'] if s['umc']['decoded']['vsoc_svi2'] else '-'} V")
@@ -255,7 +256,7 @@ def render_md(s):
     L.append(f"- DMI configured DIMM voltage: {', '.join(dv) or '-'} (SPD nominal, not the real VDIMM)")
     vt = s.get("vtt_proxy")
     if vt:
-        L.append(f"- DDR VTT (IT8792E in1): {vt['in1_V']:.3f} V = {vt['adc_counts']} ADC counts -> VDIMM ~{vt['vdimm_est_V']:.2f} V "
+        L.append(f"- DDR VTT (IT8792E in1): {vt['in1_V']:.3f} V = {vt['adc_counts']} ADC counts, so VDIMM is about {vt['vdimm_est_V']:.2f} V "
                  "(valid only if BIOS 'DRAM Termination' = Auto)")
     L += ["", "## Modules", "", "| Locator | Size | Rank | Part | Serial | Speed / configured | Voltage |", "|---|---|---|---|---|---|---|"]
     for d in s["dmi"]["dimms"]:
@@ -380,7 +381,7 @@ def main():
         f.write(dmi_text)
     with open(os.path.join(d, "raw", "dmidecode_t17_dump.txt"), "w") as f:
         f.write(priv["dmidecode_t17_dump"])
-    # BIOS setup configuration (EFI variables) + the HII database needed to decode it (bios_settings_decode.py)
+    # BIOS setup configuration (EFI variables) and the HII database needed to decode it (bios_settings_decode.py)
     ev = os.path.join(d, "raw", "efivars")
     os.makedirs(ev, exist_ok=True)
     for n in sorted(os.listdir("/sys/firmware/efi/efivars")):

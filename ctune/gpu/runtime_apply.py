@@ -7,7 +7,7 @@ through pkexec without a password (docs/design.md section 2).
 
 Any process running as that user can call it, so it takes nothing from the caller but numbers:
 - no path, file or tool argument: nvidia_oc, nvidia-smi and gpu-boot-apply are the root-owned copies at fixed
-  paths, and gpu-boot-apply is loaded from its fixed path, never from the repo;
+  paths, and it loads gpu-boot-apply from its fixed path, never from the repo;
 - every value inside ctune's caps (gpu-boot-apply's, the same as apply.py's) and the power limit between the
   GPU's minimum and its default, as the skill's guardrail says;
 - it writes no file: the caller keeps ctune's state file.

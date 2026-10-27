@@ -1,27 +1,27 @@
 #!/usr/bin/env python3
-"""Decode the live AMI Aptio V / Gigabyte BIOS setup configuration from EFI variables + the HII database.
+"""Decode the live AMI Aptio V (Gigabyte) BIOS setup configuration from EFI variables and the HII database.
 
-Inputs (defaults = the snapshot in $CTUNE_SNAPSHOT; ram_snapshot.py passes them explicitly):
-  --hiidb    raw/fwmem/hiidb.bin           HII database exported by AMI (EFI var 'HiiDB' -> phys address)
+Inputs (the defaults come from the snapshot in $CTUNE_SNAPSHOT; ram_snapshot.py passes them explicitly):
+  --hiidb    raw/fwmem/hiidb.bin           HII database exported by AMI (EFI var 'HiiDB' holds its physical address)
   --efivars  raw/efivars/                  copies of /sys/firmware/efi/efivars/* (4-byte attribute header + data)
   --live     /sys/firmware/efi/efivars     read-only fallback for varstores that were not captured
 Outputs (--out, default <snapshot>/decoded/):
   bios_settings.json, bios_settings.md, efivars_extra/ (copies of the live fallback vars that were used)
 
 Formats:
-  * efivarfs files: first 4 bytes = UINT32 attributes, then the data (Linux Documentation/filesystems/efivarfs.rst).
+  * efivarfs files: the first 4 bytes are UINT32 attributes, then the data (Linux Documentation/filesystems/efivarfs.rst).
   * IFR / HII: see hii_ifr.py (UEFI 2.10 ch. 33).
   * AMI NVAR (StdDefaults): UEFITool common/nvram.h (https://github.com/LongSoft/UEFITool/blob/new_engine/common/nvram.h)
     NVAR_ENTRY_HEADER {UINT32 Signature 'NVAR'; UINT16 Size; UINT32 Next:24; UINT32 Attributes:8}
     attributes RUNTIME 0x01, ASCII_NAME 0x02, GUID 0x04, DATA_ONLY 0x08, EXT_HEADER 0x10, HW_ERROR_RECORD 0x20,
-    AUTH_WRITE 0x40, VALID 0x80; without GUID attribute a 1-byte index into the GUID store follows the header;
-    the GUID store sits at the end of the store and grows downwards (index 0 = last 16 bytes)
+    AUTH_WRITE 0x40, VALID 0x80; without the GUID attribute a 1-byte index into the GUID store follows the header;
+    the GUID store is at the end of the store and grows downwards (index 0 is the last 16 bytes)
     (UEFITool common/ffsparser.cpp parseNvarStore).
-  * Gigabyte ProfileN (GUID b05e6b5f-6ed8-4015-b5c5-b1049faf3e5b): reverse-engineered here, no public spec:
+  * Gigabyte ProfileN (GUID b05e6b5f-6ed8-4015-b5c5-b1049faf3e5b): reverse-engineered for ctune, with no public spec:
     header 0x38 bytes {u16 magic 0x1964; u16 payload_len; u16 0x3811; u8 flag; u8 sum8(payload);
-    u32 record_count; char[12] BIOS-version+board-id ('F16b8ARNR003'); CHAR16 name[16]}
-    followed by records {u32 tse_var_index; u16 len; u8 data[len]} (verified: lengths add up exactly, the
-    checksum byte equals sum(payload) & 0xFF for all 9 slots).
+    u32 record_count; char[12] BIOS version and board id ('F16b8ARNR003'); CHAR16 name[16]}
+    followed by records {u32 tse_var_index; u16 len; u8 data[len]}. On the tested board the lengths add up exactly,
+    and the checksum byte equals sum(payload) & 0xFF in all 9 slots.
 """
 import argparse
 import glob
@@ -322,7 +322,8 @@ def decode(args):
 
     # Assumed values for boot-time-only pseudo varstores used in conditions (no runtime efivar exists).
     # SystemAccess (AMI TSE): 0 = administrator, 1 = user. With no setup passwords the user is always
-    # administrator; AMITSESetup holds the user+admin password buffers (2 x 40 bytes) - all zero here.
+    # administrator. AMITSESetup holds the user and admin password buffers (2 x 40 bytes), all zero on the
+    # tested board.
     assumed = {}
     tse = get_var("AMITSESetup", "c811fa38-42c8-4579-a9bb-60e94eddfb34")
     if tse and not any(tse["data"][:80]):
@@ -402,7 +403,7 @@ def decode(args):
         r["_q"] = q
         rows.append(r)
 
-    # dedupe by storage location -> settings
+    # dedupe by storage location into settings
     settings = {}
     for r in rows:
         if r.get("offset") is None or r["op"] in ("REF", "ACTION"):
@@ -446,9 +447,10 @@ def decode(args):
         if g != GIGABYTE_PROFILE_GUID or not name.startswith("Profile"):
             continue
         pr = parse_gbt_profile(ev["data"])
-        # map record index -> variable: a record maps to a variable when exactly one non-profile efivar has the
-        # same length, the length is unique inside the profile and >= 40 bytes (small stores stay unmapped). Records are AMI TSE variable-list
-        # indices, which are not published, so smaller records are only guessed.
+        # map each record index to a variable: a record maps to a variable when exactly one non-profile efivar has
+        # the same length, and the length is unique inside the profile and at least 40 bytes (small stores stay
+        # unmapped). Records are AMI TSE variable-list indices, which are not published, so smaller records are
+        # only guessed.
         recmap = {}
         guesses = {}
         sizes = [len(b) for b in pr["records"].values()]
@@ -537,7 +539,7 @@ def write_outputs(res, out_dir, focus_md, problems):
     A("- Generated by `scripts/bios_settings_decode.py` (IFR parser `scripts/hii_ifr.py`).")
     A("- Columns: **cur** = current value (raw, then option text); **IFR def** = standard default from the IFR "
       "(DEFAULT opcode > option DEFAULT flag > checkbox flag); **Std** = AMI StdDefaults NVAR value (only Setup & a few small stores have one); "
-      "**ND** = NON-DEFAULT vs IFR default; **vis** = visible under current values (suppressif evaluated: Y / hidden / ? unknown).\n")
+      "**ND** = NON-DEFAULT against the IFR default; **vis** = visible under current values (suppressif evaluated: Y / hidden / ? unknown).\n")
     # statistics
     nq = len(rows)
     nstore = sum(1 for r in rows if r.get("varstore") and r["op"] not in ("REF", "ACTION"))
@@ -551,16 +553,16 @@ def write_outputs(res, out_dir, focus_md, problems):
     A(f"- Formsets: " + "; ".join(f"'{fs.title}' ({fs.guid}, {len(fs.forms)} forms, {len(fs.questions)} questions)"
                                   for fs in res["db"].formsets if fs.questions))
     A(f"- Question instances: {nq}; with storage: {nstore}; unique storage locations: {len(res['settings'])}; "
-      f"non-default (vs IFR default): {nd}.")
+      f"non-default (against the IFR default): {nd}.")
     A(f"- Value validity: {nval}/{nchk} checkable instances hold a legal value (ONE_OF option / NUMERIC range); invalid: "
       + (", ".join(f"{r['prompt']} ({r['varstore']}@{r['offset']}={r.get('value')})" for r in ninv) or "none") + ".")
-    A(f"- IFR default vs AMI StdDefaults NVAR store: {agree} agree, {len(disagree)} disagree"
+    A(f"- IFR default against the AMI StdDefaults NVAR store: {agree} agree, {len(disagree)} disagree"
       + (" (" + ", ".join(f"{r['prompt']} {r['varstore']}@{r['offset']}" for r in disagree) + ")" if disagree else "")
       + ". StdDefaults holds: " + ", ".join(f"{e.get('name')}({len(e['data'])} B)" for e in res["std_entries"])
-      + " - no AmdSetup / AOD_SETUP / AMD_PBS_SETUP (AMD CBS/AOD defaults come from the IFR only).")
-    A("- Where things live: Gigabyte Tweaker (shown as 'M.I.T.' in the HII strings) -> `Setup` (ec87d643...) "
-      "offsets 288-520 (frequencies 288-351, memory 345-487, voltages 490-517); AMD CBS -> `AmdSetup` (3a997502...); "
-      "AMD Overclocking -> `AOD_SETUP` (5ed15dc0...); AMD PBS -> `AMD_PBS_SETUP`; fans -> `GcSensorVarName`. "
+      + ", and no AmdSetup, AOD_SETUP or AMD_PBS_SETUP (AMD CBS and AOD defaults come from the IFR only).")
+    A("- Where things live: Gigabyte Tweaker (shown as 'M.I.T.' in the HII strings) is in `Setup` (ec87d643...) "
+      "offsets 288-520 (frequencies 288-351, memory 345-487, voltages 490-517); AMD CBS in `AmdSetup` (3a997502...); "
+      "AMD Overclocking in `AOD_SETUP` (5ed15dc0...); AMD PBS in `AMD_PBS_SETUP`; fans in `GcSensorVarName`. "
       "The CBS UMC timing fields currently mirror the Tweaker values (Gigabyte copies them; see Profile3, where CBS was "
       "still Auto while Tweaker held values).")
     if res.get("assumed"):
@@ -574,7 +576,7 @@ def write_outputs(res, out_dir, focus_md, problems):
     A("Every key setting was found. Compare them with the running hardware with `ctune mem verify`.\n" if not problems
       else "These key settings match no question, or several; fix KEY in bios_settings_decode.py:\n\n"
       + "\n".join(f"- {md_escape(p)}" for p in problems) + "\n")
-    A("### Varstore size check (IFR VARSTORE size vs efivar data size)\n")
+    A("### Varstore size check (IFR VARSTORE size against efivar data size)\n")
     A("| Varstore | GUID | IFR size | efivar size | match | in StdDefaults |\n|---|---|---|---|---|---|")
     for v in res["vs_report"]:
         if v["efivar_size"] is None and not v["in_StdDefaults"]:
@@ -591,7 +593,7 @@ def write_outputs(res, out_dir, focus_md, problems):
       "u8 flag, u8 sum8(payload), u32 record count, 'F16b8ARNR003' (BIOS + board id), CHAR16 name[16]} then records "
       "{u32 AMI-TSE variable index, u16 length, raw variable bytes}. Raw copies of the variables, not NVAR. "
       "Record 0 = Setup (646 B), 110 = AOD_SETUP (1020 B), 112 = AmdSetup (1553 B), 114 = RtkNvData (2014 B, NIC).\n")
-    A("| Slot | Name | BIOS | flag | checksum | records | Setup/AOD/CBS identical to current | # setting diffs vs current |\n|---|---|---|---|---|---|---|---|")
+    A("| Slot | Name | BIOS | flag | checksum | records | Setup/AOD/CBS identical to current | # setting diffs against current |\n|---|---|---|---|---|---|---|---|")
     for p in res["profiles"]:
         ident = ", ".join(f"{k}:{'=' if v else 'diff'}" for k, v in sorted(p["identical_to_current"].items()))
         A(f"| {p['slot']} | {md_escape(p['name']) or '(none)'} | {p['bios']} | {p['flag']} | {'OK' if p['checksum_ok'] else 'BAD'} | "
@@ -600,7 +602,7 @@ def write_outputs(res, out_dir, focus_md, problems):
     for p in res["profiles"]:
         if not p["diffs_vs_current"]:
             continue
-        A(f"### {p['slot']} '{md_escape(p['name'])}' — settings that differ from the current configuration\n")
+        A(f"### {p['slot']} '{md_escape(p['name'])}': settings that differ from the current configuration\n")
         A("| Setting | Store@off | Current | Profile |\n|---|---|---|---|")
         for d in p["diffs_vs_current"]:
             A(f"| {md_escape(d['where'])} | {d['varstore']}@{d['offset']} | {fmt(d['current'])} {md_escape(d['current_text'] or '')} | "
@@ -642,7 +644,8 @@ def write_outputs(res, out_dir, focus_md, problems):
 # ----------------------------------------------------------------------------- focused memory section
 # Settings are found by menu location ("form path :: prompt") and varstore, never by offset alone: a BIOS update moves
 # offsets. F19c's Setup store grows from 646 to 650 bytes and 418 Tweaker questions shift by +4 or +5 bytes against
-# F16b (CAS Latency Setup@368 -> 373), so an offset table would show another setting's value without any error.
+# F16b (CAS Latency moves from Setup@368 to 373), so an offset table would show another setting's value without any
+# error.
 TW_FREQ = "Setup > M.I.T. > Advanced Frequency Settings"
 TW_CPU = TW_FREQ + " > Advanced CPU Settings"
 TW_MEM = "Setup > M.I.T. > Advanced Memory Settings"
@@ -675,13 +678,14 @@ def find_row(res, store, path, prompt, op=None, width=None):
 
 # Gigabyte "Advanced Voltage Settings" (Setup varstore) store a UI code, not millivolts. 0xFFFF = Auto.
 # Ranges below come from Gigabyte's EasyTune ACPI voltage table "GSAT" (Name(GSAT, Package(){...}) in an
-# SSDT of the F19c image, decompressed from B550AORUSPRO.F19c; the F16b SSDT could not be
-# read without root): entry = {id, name, {type, chip, i2c addr, loop, reg}, {f1, f2, {min, max, step, divisor}}, ..., default}.
-# code -> volts assumed = (min + code*step)/divisor ("index from min"). Evidence: DRAM code 55 -> 1.550 V agrees with the
-# DDR VTT proxy (IT8792E in1 0.763 V -> ~1.53 V); the "from max" reading (1.45 V) does not. For CPU Vcore / VCORE SOC
-# the IFR greys out DVID unless code == 1 (help text: DVID only with 'Normal'), so codes 0/1 are special (Auto/Normal)
-# and the first voltage may be code 2 -> alternative value (min + (code-2)*step).
-# Keyed by prompt on the TW_VOLT page (Setup varstore): prompt -> (min V, step V, codes 0/1 reserved).
+# SSDT of the F19c image, decompressed from B550AORUSPRO.F19c; the F16b SSDT could not be read without root).
+# entry = {id, name, {type, chip, i2c addr, loop, reg}, {f1, f2, {min, max, step, divisor}}, ..., default}.
+# The code is assumed to map to volts as (min + code*step)/divisor ("index from min"). Evidence: DRAM code 55 gives
+# 1.550 V, which agrees with the DDR VTT proxy (IT8792E in1 0.763 V, about 1.53 V); the "from max" reading (1.45 V)
+# does not. For CPU Vcore and VCORE SOC the IFR greys out DVID unless code == 1 (help text: DVID only with 'Normal'),
+# so codes 0 and 1 are special (Auto and Normal), and the first voltage may be code 2, with the alternative value
+# min + (code-2)*step.
+# Keyed by prompt on the TW_VOLT page (Setup varstore); each prompt maps to (min V, step V, codes 0/1 reserved).
 GBT_VOLT = {
     "CPU Vcore": (0.750, 0.00625, True),
     "VCORE SOC": (0.750, 0.00625, True),
@@ -710,7 +714,7 @@ def gbt_volt_text(r):
     return t
 
 
-# (label, varstore, form path, prompt[, {op or width}]) - the compact "what is actually configured" table
+# (label, varstore, form path, prompt[, {op or width}]): the compact "what is actually configured" table
 KEY = [
     ("XMP", "Setup", TW_FREQ, "Extreme Memory Profile(X.M.P.)"),
     ("Memory speed (System Memory Multiplier, x100)", "Setup", TW_FREQ, "System Memory Multiplier"),
@@ -837,17 +841,17 @@ KEY = [
 
 FOCUS = [
     # (title, formset regex, include regex on "form path :: prompt", exclude regex)
-    ("Tweaker / M.I.T. - frequency, CPU & memory (Gigabyte, Setup varstore)", r"^Setup$",
+    ("Tweaker / M.I.T.: frequency, CPU and memory (Gigabyte, Setup varstore)", r"^Setup$",
      r"Advanced Memory Settings|Memory Sub Timings|Advanced Frequency Settings|Advanced CPU Settings", None),
-    ("Tweaker / M.I.T. - voltages (Gigabyte, Setup varstore)", r"^Setup$", r"Advanced Voltage Settings", None),
-    ("AMD Overclocking (AOD_SETUP) - memory, fabric, voltages, PBO/CO", r"AMD Overclocking",
+    ("Tweaker / M.I.T.: voltages (Gigabyte, Setup varstore)", r"^Setup$", r"Advanced Voltage Settings", None),
+    ("AMD Overclocking (AOD_SETUP): memory, fabric, voltages, PBO and CO", r"AMD Overclocking",
      r"DDR|DRAM|Data Bus|CAD Bus|Fabric|FCLK|UCLK|Voltage|VDD|SoC|Precision Boost|PBO|Curve|Boost|Thermal|NUMA|Gaming|LCLK|Power Down|Gear|Cmd2T",
      None),
-    ("AMD CBS - UMC / DDR4", r"AMD CBS", r"UMC Common Options|DDR4 Common", r"MBIST|ECC Configuration|Common RAS"),
-    ("AMD CBS - DF", r"AMD CBS", r"DF Common Options|Memory interleaving|NUMA", r"Link"),
-    ("AMD CBS - NBIO / SMU / XFR", r"AMD CBS", r"SMU Common Options|XFR Enhancement|NBIO Common Options :: IOMMU",
+    ("AMD CBS: UMC and DDR4", r"AMD CBS", r"UMC Common Options|DDR4 Common", r"MBIST|ECC Configuration|Common RAS"),
+    ("AMD CBS: DF", r"AMD CBS", r"DF Common Options|Memory interleaving|NUMA", r"Link"),
+    ("AMD CBS: NBIO, SMU and XFR", r"AMD CBS", r"SMU Common Options|XFR Enhancement|NBIO Common Options :: IOMMU",
      r"Fan Control|NBIO LCLK DPM|xGMI"),
-    ("AMD CBS - CPU common (C-states, PSI, prefetch)", r"AMD CBS", r"CPU Common Options", r"Thread Enablement|SMU and PSP"),
+    ("AMD CBS: CPU common (C-states, PSI, prefetch)", r"AMD CBS", r"CPU Common Options", r"Thread Enablement|SMU and PSP"),
 ]
 
 

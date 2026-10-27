@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Decode Zen2/Zen3 (Matisse/Vermeer, e.g. Ryzen 7 5800X3D) DDR4 UMC registers read over SMN.
+"""Decode Zen2 and Zen3 (Matisse, Vermeer, for example the Ryzen 7 5800X3D) DDR4 UMC registers read over SMN.
 
 Input : dict {absolute_smn_address: u32}. UMC n base = 0x50000 + (n << 20)
         (ZenStates-Core MemoryConfig.cs:737; Linux amd64_edac.h:405-409).
@@ -7,13 +7,13 @@ Source of the bit map: irusanov/ZenStates-Core @869b7e8 Dictionaries/DDR4Diction
 Hardware/DRAM/Ddr4Timings.cs, BaseDramTimings.cs, MemoryConfig.cs; cross-checked field by field with
 cyring/CoreFreq @20de51c x86_64/amd_reg.h:1786-2319. AMD's public PPRs (56214 rev 3.05, 55803 rev 0.91)
 do not document UMC::CH registers, so no width below is AMD-verified.
-Only P-state-0 timing set (0x502xx) is decoded, as ZenTimings does.
+It decodes only the P-state-0 timing set (0x502xx), as ZenTimings does.
 """
 
 UMC_STRIDE = 1 << 20
 TRFC_UNPROGRAMMED = 0x21060138      # Ddr4Timings.cs:81 (decodes to 312/192/132)
 BGS_OFF_PATTERN = 0x87654321        # BaseDramTimings.cs:220
-SVI2_SOC_PLANE = 0x5A00C            # Constants.cs:21 + Cpu.cs:1455-1459 (Vermeer); Matisse same (1430-1433)
+SVI2_SOC_PLANE = 0x5A00C            # Constants.cs:21 and Cpu.cs:1455-1459 (Vermeer); the same on Matisse (1430-1433)
 
 
 def bits(v, hi, lo):
@@ -21,7 +21,7 @@ def bits(v, hi, lo):
     return (v >> lo) & ((1 << (hi - lo + 1)) - 1)
 
 
-# (offset, key, hi, lo). Order/widths = DDR4Dictionary.cs @869b7e8 (post-fc250cb). Keys use the ZenTimings
+# (offset, key, hi, lo). Order and widths follow DDR4Dictionary.cs @869b7e8 (after fc250cb). Keys use the ZenTimings
 # DDR4 panel label when the field is shown there (DDR4TimingsPanel.xaml:28-86), else the ZSC property name.
 DDR4_FIELDS = (
     (0x50100, "DimmEccEn", 12, 12), (0x50100, "BurstCtrl", 11, 10), (0x50100, "BurstLength", 9, 8),
@@ -77,7 +77,7 @@ def required_smn_addresses(channels=(0, 1), include_svi2=True):
 
 
 def _dimm_cfg(v):
-    """DIMM_CFG bits: MemoryModule.cs:104-114 (= CoreFreq AMD_17_UMC_DIMM_CFG, amd_reg.h:1710-1732)."""
+    """DIMM_CFG bits: MemoryModule.cs:104-114 (the same as CoreFreq AMD_17_UMC_DIMM_CFG, amd_reg.h:1710-1732)."""
     names = ("OnDimmMirror", "OutputInvert", "Dram3DS", "CIsCS", "RDIMM", "LRDIMM", "X4Dram", "X16Dram",
              "DqMapSwapDis", "DimmRefDis", "PkgRnkTimingAlign")
     return {n: bool((v >> i) & 1) for i, n in enumerate(names)}
@@ -85,7 +85,7 @@ def _dimm_cfg(v):
 
 def decode_umc(regs, ch, pm_mclk_mhz=None, bclk_mhz=100.0):
     """Decode one UMC. regs: {abs_smn_addr: u32}. pm_mclk_mhz: PM-table MCLK (0xCC on table 0x380905,
-    PowerTable.cs:300); if given, speed = 2*MCLK*bclk/100 like ZenTimings (BaseDramTimings.cs:262-265 +
+    PowerTable.cs:300); if given, speed = 2*MCLK*bclk/100 like ZenTimings (BaseDramTimings.cs:262-265 and
     PowerTable.cs:632-643), else 2*Ratio*BCLK (BaseDramTimings.cs:268-269)."""
     base = ch * UMC_STRIDE
 
@@ -139,8 +139,8 @@ def decode_umc(regs, ch, pm_mclk_mhz=None, bclk_mhz=100.0):
         rp = out["RDPRE_raw"]
         out["RDPRE"] = rp + 1 if rp < 2 else rp                    # BaseDramTimings.cs:342-351
 
-    # Ratio / speed: Ddr4Timings.cs:67-73 (bits [6:0] / 3). CoreFreq declares only [5:0] (amd_reg.h:1993);
-    # the two agree for raw <= 63 (<= DDR4-4200 at 100 MHz BCLK).
+    # Ratio and speed: Ddr4Timings.cs:67-73 (bits [6:0] / 3). CoreFreq declares only [5:0] (amd_reg.h:1993);
+    # the two agree for raw values up to 63 (up to DDR4-4200 at 100 MHz BCLK).
     misc = r(0x50200)
     if misc is not None:
         raw = bits(misc, 6, 0)

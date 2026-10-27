@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-"""Independent check of the Gigabyte ProfileN efivars (no public spec; layout re-derived here from the bytes).
-Prints header fields, record table, and diffs of Setup/AmdSetup/AOD_SETUP records vs the live variables at
-memory-related offsets (offsets/widths taken from verify_hii_settings question table JSON)."""
+"""Independent check of the Gigabyte ProfileN efivars (no public spec; the layout is re-derived from the bytes).
+Prints header fields, record table, and diffs of the Setup, AmdSetup and AOD_SETUP records against the live variables at
+memory-related offsets (the offsets and widths come from the verify_hii_settings question table JSON)."""
 import sys, os, struct, json
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import verify_hii_settings as v

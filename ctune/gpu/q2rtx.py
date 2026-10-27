@@ -1,7 +1,7 @@
 """Quake II RTX: the graphics and ray-tracing load. gpu-burn never touches the RT cores, ROPs or TMUs; Q2RTX
 path-traces every frame (primary rays included) through VK_KHR_ray_query, with a compute denoiser and texture
-sampling. It checks nothing it renders, so a pass only means it did not crash, lose the device or hang: Xid errors
-and the kernel log stay the real signal. Sources: docs/research/gpu-graphics-loads.md.
+sampling. It checks nothing it renders, so a pass only means it did not crash, lose the device or hang. Xid errors
+and the kernel log remain the main signal. Sources: docs/research/gpu-graphics-loads.md.
 
 - Q2RTX 1.8.1 (final release; GPL v2 engine, the free shareware levels are in the tarball) in tools/q2rtx/.
 - It was built in Steam's sniper SDK and needs libssl 1.1, which Fedora 44 lacks, so it runs in the standalone
@@ -27,7 +27,7 @@ from ctune.core.paths import TOOLS
 
 VERSION = "1.8.1"
 URL = f"https://github.com/NVIDIA/Q2RTX/releases/download/v{VERSION}/q2rtx-{VERSION}-linux.tar.gz"
-SHA256 = "31dfd0a924366272161d3e1ff728e8f1ae8304142e3ce954d0fa73d9ff5b7562"   # GitHub asset digest, = AUR q2rtx
+SHA256 = "31dfd0a924366272161d3e1ff728e8f1ae8304142e3ce954d0fa73d9ff5b7562"   # GitHub digest, as in AUR q2rtx
 RUNTIME_VERSION = "3.0.20260805.254768"
 RUNTIME_URL = f"https://repo.steampowered.com/steamrt3/images/{RUNTIME_VERSION}/SteamLinuxRuntime_sniper.tar.xz"
 RUNTIME_SHA256 = "e264f0639ab775338311036f207b35cebe99bc417b016b53931ebca8b30b3d94"   # that snapshot's SHA256SUMS
@@ -35,9 +35,11 @@ DIR = os.path.join(TOOLS, "q2rtx", "q2rtx")
 BIN = os.path.join(DIR, "q2rtx")
 RUNTIME = os.path.join(TOOLS, "steamrt-sniper", "SteamLinuxRuntime_sniper", "run")
 MODE = "headless"      # or "session": fullscreen on the user's desktop
-SIZE = (2560, 1440)    # measured at the 1905 MHz lock, 400 W: 3440x1440 sat at the power cap (at the lock 52 % of
-                       # the time), 2560x1440 at the lock 90 % at 381 W, 1920x1080 was bursty (busy ~30 %)
-PASS_TIMEOUT_S = 120   # one q2demo1 pass took 10 to 15 s here, the start of gamescope and the runtime included
+SIZE = (2560, 1440)    # on the tested RTX 3080 Ti at the 1905 MHz lock and 400 W, 3440x1440 ran at the power cap
+                       # (at the lock 52 % of the time), 2560x1440 at the lock 90 % of the time at 381 W, and
+                       # 1920x1080 was bursty (busy about 30 %)
+PASS_TIMEOUT_S = 120   # one q2demo1 pass took 10 to 15 s on that card, including the start of gamescope and the
+                       # runtime
 TERM_GRACE_S = 10      # then SIGKILL: a game blocked in its error dialog ignores SIGTERM
 MIN_SECONDS = 60
 

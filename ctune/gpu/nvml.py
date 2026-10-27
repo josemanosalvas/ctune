@@ -1,7 +1,7 @@
 """Minimal NVML binding (ctypes, no dependencies) for NVIDIA tuning: clocks, offsets, power, throttle reasons.
 
 Setters need root. Settings made through NVML last until reboot or driver reload, so a crash undoes them.
-Offsets use NVML units: the memory offset is half of what nvidia-settings / GreenWithEnvy display.
+Offsets use NVML units: the memory offset is half of what nvidia-settings and GreenWithEnvy display.
 """
 import ctypes
 

@@ -4,7 +4,7 @@
 # PTX, so the driver never JIT-compiles it (the maintainer's fix for issue #145, README "PTX JIT"). A third change
 # makes both compares bitwise: upstream ships EPSILON 0.001f and EPSILOND 1e-7, but its own comment says 0 is fine
 # because cuBLAS results do not depend on accumulation order. At the matrix values here (about 2e5) 1e-7 leaves the
-# low ~12 bits of every FP64 result unchecked.
+# roughly the low 12 bits of every FP64 result unchecked.
 ARG CUDA_VERSION=13.4.3
 FROM docker.io/nvidia/cuda:${CUDA_VERSION}-devel-ubi9 AS builder
 WORKDIR /build

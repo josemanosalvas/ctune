@@ -165,7 +165,7 @@ if __name__ == "__main__":
 
 
 class ReviewRegressions(unittest.TestCase):
-    """Runner, marker and verdict defects, kept fixed."""
+    """Regression tests for runner, marker and verdict defects."""
 
     def test_unknown_unit_state_keeps_a_live_marker(self):
         real = stress.unit_state

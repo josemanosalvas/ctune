@@ -1,19 +1,19 @@
 """Platform detection. Each platform package provides the privileged snapshot collector and decoders.
 
-Supported: zen3_am4 (Vermeer/Cezanne-class desktop, DDR4). Planned: zen4_am5 / zen5_am5 (DDR5), using the
-same layout: UMC register map + pm_table offsets + AMI BIOS decode (the AMI part is shared).
+Supported: zen3_am4 (Vermeer- and Cezanne-class desktops, DDR4). Planned: zen4_am5 and zen5_am5 (DDR5), with the
+same layout: a UMC register map, pm_table offsets and the AMI BIOS decoder, which all platforms share.
 """
 import os
 import re
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 
-# (cpu family, model range) -> platform package
+# (cpu family, model range) and the platform package for it
 TABLE = [
-    (0x19, range(0x20, 0x30), "zen3_am4"),   # Vermeer (5000 desktop incl. 5800X3D)
-    (0x19, range(0x50, 0x60), "zen3_am4"),   # Cezanne (5000G) - same DDR4 UMC map
-    (0x19, range(0x60, 0x70), "zen4_am5"),   # Raphael (7000) - not implemented yet
-    (0x1A, range(0x40, 0x50), "zen5_am5"),   # Granite Ridge (9000) - not implemented yet
+    (0x19, range(0x20, 0x30), "zen3_am4"),   # Vermeer (5000 desktop, including the 5800X3D)
+    (0x19, range(0x50, 0x60), "zen3_am4"),   # Cezanne (5000G), the same DDR4 UMC map
+    (0x19, range(0x60, 0x70), "zen4_am5"),   # Raphael (7000), not implemented yet
+    (0x1A, range(0x40, 0x50), "zen5_am5"),   # Granite Ridge (9000), not implemented yet
 ]
 IMPLEMENTED = {"zen3_am4"}
 

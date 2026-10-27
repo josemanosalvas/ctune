@@ -10,8 +10,8 @@ Any process running as that user can call it, so it takes nothing from the calle
 the SMN register list comes from zen3_ddr4_decode.py, and the /dev/mem addresses from the firmware's own tables
 (ACPI, and EFI variables only root can write). It skips the bulk ACPI NVS dumps (several MB that can hold other
 firmware data, readable once the kernel runs with iomem=relaxed): a snapshot that needs them runs ram_snapshot.py as
-root, behind the password. The helpers run from this root-owned directory into a private temp directory under the
-root-owned /run/ctune, removed before the output is printed. One collector runs at a time.
+root, behind the password. The helpers run from this root-owned directory into a private temporary directory under
+the root-owned /run/ctune, which the collector removes before it prints the output. One collector runs at a time.
 """
 import argparse
 import base64

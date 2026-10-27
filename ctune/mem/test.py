@@ -1,11 +1,12 @@
 """RAM stability tests on Linux: stressapptest over most of the free memory, with a GPU load to heat the DIMMs.
 
-  screen  (every step, 25 min): stressapptest -W + memtest_vulkan as the GPU heat load.
-  fabric  (FCLK steps and after a BIOS flash, 90 min + 20 min idle): the screen plus NVMe reads, then an idle soak,
-          because an unstable fabric often reboots the machine at idle.
+  screen  (every step, 25 min): stressapptest -W, with memtest_vulkan as the GPU heat load.
+  fabric  (FCLK steps and after a BIOS flash, 90 min, then 20 min idle): the screen with NVMe reads, then an idle
+          soak, because an unstable fabric often reboots the machine at idle.
 
-Red = stressapptest errors or hardware incidents, any new corrected machine-check error (umc banks point at the
-memory, fabric banks at FCLK/VDDG/VSOC), a VRAM or Xid error from the heat load, or a crash (recorded on the next boot).
+The test is red on stressapptest errors or hardware incidents, any new corrected machine-check error (umc banks point
+at the memory, fabric banks at FCLK, VDDG or VSOC), a VRAM or Xid error from the heat load, or a crash (recorded on
+the next boot).
 """
 import os
 import time
@@ -54,7 +55,7 @@ def ram_loads(seconds, mb, gpu_heat=True, disk=False):
 
 def test(kind="screen", minutes=None, gpu_heat=True, note="", record=True, mb=None):
     """Run a RAM screen or fabric test and record it in the journal. mb caps the RAM it takes (default: all free RAM
-    minus 1.5 GB). Returns verdict green/red with the sources."""
+    minus 1.5 GB). Returns the verdict (green or red) with its sources."""
     if kind not in DEFAULT_MINUTES:
         raise ValueError("kind is 'screen' or 'fabric'")
     if not os.access(stress.STRESSAPPTEST, os.X_OK):

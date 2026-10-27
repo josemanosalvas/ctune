@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-"""Re-check the APCB DDR4 CAD-bus / data-bus / ODT-pattern rows claimed by the termination research.
+"""Re-check the APCB DDR4 CAD-bus, data-bus and ODT-pattern rows that the termination research cites.
 Struct layouts: oxidecomputer/amd-apcb src/ondisk.rs (UdimmDdr4CadBusElement 36 B, Ddr4DataBusElement 52 B,
-Ddr4OdtPatElement 20 B; DdrRates bit n = DDR(n*133.33) i.e. bit12=1600 ... bit24=3200; drive strength
+Ddr4OdtPatElement 20 B; DdrRates bit n = DDR(n*133.33), that is, bit12=1600 ... bit24=3200; drive strength
 codes 0=120,1=60,3=40,7=30,15=24,31=20 ohm; RttNom/Park JEDEC MR codes 0 off,1 60,2 120,3 40,4 240,5 48,6 80,7 34;
 RttWr 0 off,1 120,2 240,3 HiZ,4 80).  Read-only; usage: python3 -I apcb_tables_check.py <bios image>"""
 import struct, sys

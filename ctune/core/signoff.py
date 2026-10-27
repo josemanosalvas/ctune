@@ -7,11 +7,11 @@ Phases, in order (minutes are defaults):
   cpu_heavy 25  mprime AVX2 1344K, the heavy-load counterpart
   gpu       90  gpu-burn FP32 35 %, FP64 12 %, tensor cores 10 %, FP32 frozen 1 s in 10 13 % (results
               checked), Quake II RTX 20 % (RT cores; crashes and hangs only), memtest_vulkan 10 %
-  combined  30  stressapptest + memtest_vulkan + NVMe reads at once (fabric and PCIe)
+  combined  30  stressapptest, memtest_vulkan and NVMe reads at once (fabric and PCIe)
   idle      30  nothing running; an unstable fabric or Curve Optimizer often freezes or reboots here
 
 Each phase is red on its own load errors or any new corrected machine-check, kernel hardware-error or Xid line.
-The run stops at the first red phase unless keep_going. A crash is recorded as red on the next boot, naming the phase.
+The run stops at the first red phase unless keep_going is set. The next boot records a crash as red and names the phase.
 """
 import os
 import time
@@ -21,7 +21,7 @@ from ctune.core.paths import DATA
 
 PHASES = ("ram", "ycruncher", "cpu", "cpu_heavy", "gpu", "combined", "idle")
 MINUTES = {"ram": 60, "ycruncher": 45, "cpu": 50, "cpu_heavy": 25, "gpu": 90, "combined": 30, "idle": 30}
-# gpu phase: gpu.test argument -> (share of the phase, floor in s)
+# gpu phase: maps each gpu.test argument to (share of the phase, floor in s)
 GPU_SHARES = {"burn_seconds": (0.35, 60), "fp64_seconds": (0.12, 90), "tc_seconds": (0.10, 30),
               "transient_seconds": (0.13, 60), "graphics_seconds": (0.20, 60), "vram_seconds": (0.10, 60)}
 
@@ -119,8 +119,8 @@ def _phase(name, minutes, mb_cap=None):
 
 
 def run(phases=None, minutes=None, keep_going=False, note="", mb=None):
-    """Run the sign-off phases in order and record one journal result. minutes overrides per phase, e.g. {"ram": 120};
-    mb caps the RAM the memory phases take."""
+    """Run the sign-off phases in order and record one journal result. minutes overrides per phase, for example
+    {"ram": 120}; mb caps the RAM the memory phases take."""
     phases = list(phases or PHASES)
     bad = [p for p in phases if p not in PHASES]
     if bad:

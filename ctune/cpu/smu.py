@@ -1,10 +1,11 @@
-"""Curve Optimizer on Vermeer (Zen 3, family 19h model 21h) through the ryzen_smu driver, plus per-core pm_table telemetry.
+"""Curve Optimizer on Vermeer (Zen 3, family 19h model 21h) through the ryzen_smu driver, and per-core pm_table
+telemetry.
 
 Command IDs and argument encoding, checked against the sources (notes and pinned commits: docs/research/cpu-co-smu.md):
 - MP1 0x35 SetDldoPsmMargin, one core: ZenStates-Core 869b7e8 Hardware/Smu/Settings/Zen3Settings.cs L22;
-  UXTU eeb4304 RyzenSmu.cs L422 (Socket_AM4_V2 = Matisse/Vermeer); ruv.py c08815d L114 (5800X3D, Linux).
-  0x36 is SetAllDldoPsmMargin (every core at once: Zen3Settings.cs L23, UXTU L420, ruv.py L147). Zen 2 uses 0x34/0x35
-  (Zen2Settings.cs L69-70), so the IDs shift by one between generations. ctune never sends 0x36.
+  UXTU eeb4304 RyzenSmu.cs L422 (Socket_AM4_V2, which covers Matisse and Vermeer); ruv.py c08815d L114 (5800X3D,
+  Linux). 0x36 is SetAllDldoPsmMargin (every core at once: Zen3Settings.cs L23, UXTU L420, ruv.py L147). Zen 2
+  uses 0x34 and 0x35 (Zen2Settings.cs L69-70), so the IDs shift by one between generations. ctune never sends 0x36.
 - MP1 0x48 GetDldoPsmMargin, one core: ruv.py L103-110 only. Response argument 0 is a sign-extended 32-bit margin.
   ZenStates-Core has no Zen 3 MP1 getter; its RSMU 0x7C is marked "Not sure" (Zen2Settings.cs L35). The root helper
   writes nothing until a probe in the same boot has read the BIOS values back for every core.
@@ -12,9 +13,9 @@ Command IDs and argument encoding, checked against the sources (notes and pinned
   complement. ZenStates-Core SetPsmMarginSingleCore.cs L3-10 and L25, Utils.cs L180-184 (MakePsmMarginArg),
   Cpu.cs L932-937 (MakeCoreMask); ruv.py L114 builds the same word. The other five arguments are 0.
 - Mailbox: ryzen_smu takes exactly 24 bytes in smu_args (drv.c L223-228) and a 4-byte ID in mp1_smu_cmd (drv.c
-  L169-186); MP1 on Vermeer is cmd 0x3B10530 / rsp 0x3B1057C / args 0x3B109C4 (smu.c L528-531, Zen3Settings.cs L11-13).
-  The driver returns OK when the SMU answers an error code quickly (smu.c L201-213 fails only after the retries run
-  out), so a status of 1 does not prove a write landed. Every write is read back with 0x48.
+  L169-186). MP1 on Vermeer is cmd 0x3B10530, rsp 0x3B1057C and args 0x3B109C4 (smu.c L528-531, Zen3Settings.cs
+  L11-13). The driver returns OK when the SMU answers an error code quickly (smu.c L201-213 fails only after the
+  retries run out), so a status of 1 does not prove a write took effect. ctune reads every write back with 0x48.
 """
 import fcntl
 import os
@@ -59,14 +60,14 @@ def _int(label, v):
 def core_mask(core):
     core = _int("core", core)
     if not 0 <= core < MAX_CORES:
-        raise ValueError(f"core {core} outside 0..{MAX_CORES - 1}")
+        raise ValueError(f"core {core} outside 0 to {MAX_CORES - 1}")
     return core << 20   # CCD 0, CCX 0
 
 
 def set_arg(core, margin):
     margin = _int("margin", margin)
     if not CO_MIN <= margin <= CO_MAX:
-        raise ValueError(f"margin {margin} outside {CO_MIN}..{CO_MAX}")
+        raise ValueError(f"margin {margin} outside {CO_MIN} to {CO_MAX}")
     return core_mask(core) | (margin & 0xFFFF)
 
 
@@ -82,12 +83,13 @@ def decode_margin(word):
 def check_readback(word):
     m = decode_margin(word)
     if not CO_MIN <= m <= CO_MAX:
-        raise SmuError(f"getter returned {word:#010x}, not a margin in {CO_MIN}..{CO_MAX}; the 0x48 getter is unproven here")
+        raise SmuError(f"getter returned {word:#010x}, not a margin from {CO_MIN} to {CO_MAX}; "
+                       "the 0x48 getter is unproven on this machine")
     return m
 
 
 def validate_change(core, current, new):
-    """Guardrail errors for moving one core from `current` to `new` (empty list = allowed)."""
+    """Guardrail errors for moving one core from `current` to `new` (an empty list means allowed)."""
     errs = []
     try:
         set_arg(core, new)
@@ -96,7 +98,7 @@ def validate_change(core, current, new):
     if not isinstance(current, int) or isinstance(current, bool) or not CO_MIN <= current <= CO_MAX:
         errs.append(f"current margin of core {core} unknown ({current!r})")
     elif isinstance(new, int) and abs(new - current) > MAX_STEP:
-        errs.append(f"core {core}: {current} -> {new} changes by {abs(new - current)}, more than {MAX_STEP} per step")
+        errs.append(f"core {core}: {current} to {new} changes by {abs(new - current)}, more than {MAX_STEP} per step")
     return errs
 
 
@@ -215,7 +217,7 @@ def platform():
     if len(pkgs) != 1:
         problems.append(f"{len(pkgs)} CPU packages")
     if list(cores) != list(range(len(cores))) or not 0 < len(cores) <= MAX_CORES:
-        problems.append(f"core ids {list(cores)} are not 0..N-1 on one CCD; the physical core mapping is unknown")
+        problems.append(f"core ids {list(cores)} are not 0 to N-1 on one CCD; the physical core mapping is unknown")
     return info, problems
 
 

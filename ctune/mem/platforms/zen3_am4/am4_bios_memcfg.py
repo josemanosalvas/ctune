@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""AM4 / DDR4 "BIOS" memory parameters on Linux, read the way ZenTimings reads them. Run as root.
+"""AM4 DDR4 "BIOS" memory parameters on Linux, read the way ZenTimings reads them. Run as root.
 
 Source 1, the AOD buffer: the "AMD AOD" SSDT declares OperationRegion(AODT|AODE, SystemMemory, base, len)
 in ACPI NVS. ZenTimings' BiosMemController.Resistances overlays the start of that buffer (WMI
@@ -8,19 +8,19 @@ Source 2, the APOB: the "APOB" table at a fixed physical address (0xA200000 on t
 Its MEM/type-2 entry has the per-channel ProcODT, RTT, setup and drive strength values. ZenTimings
 prefers this source.
 
-Both live in ACPI NVS. When CONFIG_IO_STRICT_DEVMEM=y, /dev/mem refuses those pages unless the kernel
-was booted with iomem=relaxed.
+Both are in ACPI NVS. When CONFIG_IO_STRICT_DEVMEM=y, /dev/mem refuses those pages unless the kernel
+booted with iomem=relaxed.
 Offline use: --ssdt FILE  --region-file FILE  --apob-file FILE  --pm-table FILE
 
 Further sections (printed after the PM table; the three sections above keep their output):
   * more of the APOB, following irusanov/ZenStates-Core 869b7e8 Hardware/Apob/*.cs: the entry list, the DDR4
-    channel timing blocks with MR0-MR6 (GEN 7/3), the DIMM SPD copies (MEM 1/17) with a DDR4 SPD + XMP 2.0
+    channel timing blocks with MR0-MR6 (GEN 7/3), the DIMM SPD copies (MEM 1/17) with a DDR4 SPD and XMP 2.0
     decode, the SMBIOS memory info (8/8), the APCB boot info (1/16), the ABL event log and training status,
     and the fabric memory map;
   * the SPD copies of the AODT buffer (field DSPD, 16 x 0x214-byte records read by WMI method AM07);
   * raw dumps of Gigabyte's EasyTuneSetup / EasyVoltage / EasyHealth buffers (EFI variables hold the address),
     sized with the EDK2 pool header in front of them;
-  * raw dumps of every E820 "ACPI Non-volatile Storage" range, plus the SystemMemory OperationRegions that
+  * raw dumps of every E820 "ACPI Non-volatile Storage" range, and of the SystemMemory OperationRegions that
     the ACPI tables declare in them;
   * --dump-dir also gets apob_spd_<slot>.bin files and bios_memcfg.json with everything decoded.
 Every decoder checks bounds and runs inside its own guard: a bad buffer prints "decode error" and the rest
@@ -29,7 +29,7 @@ address), --efivars DIR, --memmap DIR, --acpi-dir DIR; --no-nvs-dump skips the N
 """
 import argparse, glob, hashlib, json, os, struct, sys, time
 
-# ZenStates-Core Dictionaries/EncodedValueDictionaries.cs (DDR4 = APCB / BIOS table encoding)
+# ZenStates-Core Dictionaries/EncodedValueDictionaries.cs (DDR4 uses the APCB and BIOS table encoding)
 PROC_ODT = {0: "Hi-Z", 1: "480.0", 2: "240.0", 3: "160.0", 8: "120.0", 9: "96.0", 10: "80.0", 11: "68.6",
             24: "60.0", 25: "53.3", 26: "48.0", 27: "43.6", 56: "40.0", 57: "36.9", 58: "34.3", 59: "32.0",
             62: "30.0", 63: "28.2"}
@@ -52,7 +52,7 @@ def setup(v):  # ZenStates-Core Common/EncodedValues.cs Ddr4Setup
 
 # ---------------- physical memory ----------------
 DEVMEM = "/dev/mem"  # --devmem replaces it with an image file for offline tests
-STATE = {}           # buffers read by aod() / apob(), reused by the sections added below
+STATE = {}           # buffers read by aod() and apob(), reused by the later sections
 
 def read_phys(addr, n):
     fd = os.open(DEVMEM, os.O_RDONLY | os.O_SYNC)
@@ -317,7 +317,7 @@ def pm(args):
 # =====================================================================================================
 # APOB, SPD, Easy* and NVS sections. Sources (pinned): irusanov/ZenStates-Core 869b7e82 (ZSC), openSIL 9648171d
 # xUSL/Include/ApobCmn.h, EDK2 0a503bc2 MdeModulePkg/Core/Dxe/Mem/Pool.c, coreboot 80dd4ace
-# src/include/device/dram/ddr4.h + src/device/dram/ddr4.c (DDR4 MR fields), JEDEC JESD79-4 sec. 3.5 (MR0-MR6)
+# src/include/device/dram/ddr4.h and src/device/dram/ddr4.c (DDR4 MR fields), JEDEC JESD79-4 sec. 3.5 (MR0-MR6)
 # and JESD21-C Annex L (DDR4 SPD). File:line references are to those commits.
 # =====================================================================================================
 OUT = {"errors": []}  # everything decoded below, written to <dump-dir>/bios_memcfg.json
@@ -418,7 +418,7 @@ def apob_find(entries, g, ty):
 MR_CL = [9, 10, 11, 12, 13, 14, 15, 16, 18, 20, 22, 24, 23, 17, 19, 21, 25, 26, 27, 28, 0, 30, 0, 32]  # ZSC L30-34
 MR_WR = [10, 12, 14, 16, 18, 20, 24, 22, 26, 28]  # ZSC L37; MR0 A13,A11:A9, RTP = WR / 2
 MR_CWL = [9, 10, 11, 12, 14, 16, 18, 20]          # ZSC L40; MR2 A5:A3
-RZQ_DIV = {0: None, 1: 4, 2: 2, 3: 6, 4: 1, 5: 5, 6: 3, 7: 7}  # MR1 RTT_NOM / MR5 RTT_PARK (coreboot ddr4.h L155-163)
+RZQ_DIV = {0: None, 1: 4, 2: 2, 3: 6, 4: 1, 5: 5, 6: 3, 7: 7}  # MR1 RTT_NOM and MR5 RTT_PARK (coreboot ddr4.h L155-163)
 RZQ_WR = {0: "off (dynamic ODT off)", 1: 2, 2: 1, 3: "Hi-Z", 4: 3}  # MR2 RTT_WR (coreboot ddr4.h L196-201)
 
 
@@ -451,7 +451,7 @@ def mr_tccdl(mr6):
 
 
 def decode_mrs(w, vddq_mv=None):
-    """MR0..MR6 -> (dict, text lines). Bit positions: coreboot ddr4.c L338-493 (MRS encoders), JESD79-4 3.5."""
+    """Decode MR0 to MR6 into (dict, text lines). Bit positions: coreboot ddr4.c L338-493 (MRS encoders), JESD79-4 3.5."""
     mr0, mr1, mr2, mr3, mr4, mr5, mr6 = w
     wr = mr_wr(mr0)
     vref_code, rng2 = mr6 & 0x3F, bool(mr6 & 0x40)
@@ -588,7 +588,7 @@ def timing_blocks(t, eoff, esize, memclk_hint=None):
                 b["notes"].append(f"MR set matched with tCCD_L 8 (block tCCD_L {ccdl} exceeds the MR6 maximum); "
                                   "not ZenStates-Core's strict rule")
             extra = []
-            for k in (1, 2, 3):  # sets right behind the first (per DIMM / rank?) - layout not known, tentative
+            for k in (1, 2, 3):  # sets right behind the first (per DIMM or rank?); layout unknown, tentative
                 p = m + 14 * k
                 if p + 14 <= end:
                     w = mr_words(t, p)
@@ -659,7 +659,7 @@ def sbyte(x):
 
 
 def spd_ps(s, mtb, fine):
-    """Medium timebase (125 ps) + signed fine correction (1 ps), 0 when the MTB byte is 0 (ZSC L579-591)."""
+    """Medium timebase (125 ps) plus the signed fine correction (1 ps), 0 when the MTB byte is 0 (ZSC L579-591)."""
     return 0 if s[mtb] == 0 else s[mtb] * 125 + sbyte(s[fine])
 
 
@@ -683,7 +683,7 @@ def bcd(x):
 
 
 def decode_spd(spd):
-    """512-byte DDR4 SPD -> dict. Offsets: ZSC Ddr4SpdDecoder.cs L19-101 (JESD21-C Annex L, XMP 2.0)."""
+    """Decode a 512-byte DDR4 SPD into a dict. Offsets: ZSC Ddr4SpdDecoder.cs L19-101 (JESD21-C Annex L, XMP 2.0)."""
     s = bytes(spd[:512]).ljust(512, b"\0")
     d = {"device_type": s[2]}
     if s[2] not in (0x0C, 0x0E):
@@ -815,7 +815,7 @@ SPD_REC = 532  # 8 bytes, Address u32, SerialNumber u32, flags u32, Data[512]; t
 
 
 def spd_records(buf, rec0, nrec, limit):
-    """Present records -> list of dicts; None when the bytes do not look like this layout (ZSC L77-112)."""
+    """The present records as a list of dicts; None when the bytes do not look like this layout (ZSC L77-112)."""
     out = []
     for i in range(nrec):
         r = rec0 + i * SPD_REC
@@ -847,7 +847,8 @@ def print_spd_records(args, recs, prefix, other=None):
         if other is not None:
             print("    " + ("same 512 bytes as the APOB copy" if other.get(r["slot"]) == r["spd"] else
                             "DIFFERS from the APOB copy" if r["slot"] in other else "no APOB copy of this slot"))
-        # bytes 323-324 = manufacturing date, 325-328 = serial (JESD21-C Annex L); 320-322 (module maker, location) must match
+        # bytes 323-324 are the manufacturing date and 325-328 the serial (JESD21-C Annex L); 320-322 (module maker,
+# location) must match
         twin = next((k for k, v in first.items() if v[:323] == r["spd"][:323] and v[329:] == r["spd"][329:]), None)
         if twin:
             print(f"    same SPD as {twin} except manufacturing date/serial: made {d.get('mfg_date')}, "
@@ -1035,7 +1036,7 @@ def apob_details(args):
     if e:
         with Guard("APOB SMBIOS 8/8"):
             dmi = dec_dmi(t, *e)
-    # ---- timing blocks + mode registers
+    # ---- timing blocks and mode registers
     print("== APOB DDR4 channel timing blocks + mode registers MR0-MR6 (GEN 7/3, ZenStates-Core Zen3 DDR4 layout)")
     e = apob_find(entries, 7, 3)
     if not e:
@@ -1231,13 +1232,13 @@ def range_of(ranges, addr):
 
 
 def readable_type(rng):
-    """Only DRAM-backed firmware ranges are read: NVS / ACPI tables, or 'Reserved' below 0xC0000000 (the DRAM
+    """Read only DRAM-backed firmware ranges: NVS and ACPI tables, or 'Reserved' below 0xC0000000 (the DRAM
     below the 32-bit MMIO hole on the B550 AORUS PRO; Reserved ranges above it include MMIO such as 0xFED80000)."""
     return rng is not None and (rng[2] in (NVS, "ACPI Tables") or (rng[2] == "Reserved" and rng[1] < 0xC0000000))
 
 
 def read_span(addr, n):
-    """Page-wise read with one fd; refused pages are zero-filled. -> (bytes, refused pages, first error)."""
+    """Page-wise read with one fd that zero-fills refused pages. Returns (bytes, refused pages, first error)."""
     out, refused, err = bytearray(), 0, None
     fd = os.open(DEVMEM, os.O_RDONLY | os.O_SYNC)
     try:
@@ -1263,7 +1264,7 @@ EFI_MEMTYPE = ["EfiReservedMemoryType", "EfiLoaderCode", "EfiLoaderData", "EfiBo
 def pool_size(addr, rng):
     """EDK2 DXE pool header in front of an AllocatePool() buffer (Pool.c L21-41, L407-409, L520-535):
     {u32 'phd0'|'phd1', u32 reserved, u32 EFI_MEMORY_TYPE, pad, u64 Size} = 0x18 bytes, then the data, then the
-    tail {u32 'ptal', u32 reserved, u64 Size}; Size = ALIGN8(request) + 0x28. -> (data length or None, text)."""
+    tail {u32 'ptal', u32 reserved, u64 Size}; Size = ALIGN8(request) + 0x28. Returns (data length or None, text)."""
     head = addr - 0x18
     if head < rng[0]:
         return None, "no room for a pool header"
@@ -1339,7 +1340,7 @@ def gbt_easy(args):
                 r["error"] = repr(err)
                 continue
             name = save(args, f"{tag}_{addr:08x}.bin", data)
-            # sha256 / non-zero counts only in the JSON: they change every boot and ram_compare.py diffs this text
+            # sha256 and non-zero counts only in the JSON: they change every boot and ram_compare.py diffs this text
             r.update({"length": n, "refused_pages": ref, "nonzero": nonzero(data), "file": name,
                       "sha256": hashlib.sha256(data).hexdigest()})
             print(f"    {n} bytes, {ref} refused page(s)" + (f", saved {name}" if name else "")
@@ -1380,7 +1381,8 @@ def aml_name(b, i):
 
 
 def op_regions(acpi_dir):
-    """SystemMemory OperationRegions with constant base/length in DSDT/SSDT* (ACPI 6.5 sec. 19.6.100 / 20.2.5.2)."""
+    """SystemMemory OperationRegions with a constant base and length in DSDT and SSDT* (ACPI 6.5 sec. 19.6.100,
+    20.2.5.2)."""
     out, unreadable = [], 0
     for p in sorted(glob.glob(os.path.join(acpi_dir, "DSDT*")) + glob.glob(os.path.join(acpi_dir, "SSDT*"))):
         try:
@@ -1446,7 +1448,7 @@ def nvs_dump(args):
                 r["error"] = repr(err)
                 continue
             name = save(args, f"nvs_{s:08x}-{e:08x}.bin", data)
-            # sha256 / non-zero counts only in the JSON (they change every boot; ram_compare.py diffs this text)
+            # sha256 and non-zero counts only in the JSON (they change every boot; ram_compare.py diffs this text)
             r.update({"refused_pages": ref, "nonzero": nonzero(data), "file": name,
                       "sha256": hashlib.sha256(data).hexdigest()})
             print(f"  0x{s:X}-0x{e:X} ({n // 1024} KB): {ref} refused page(s)"

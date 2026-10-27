@@ -1,4 +1,4 @@
-"""Check that the BIOS configuration in a snapshot is what the hardware actually runs, and build the re-entry
+"""Check that the BIOS configuration in a snapshot matches what the hardware runs, and build the re-entry
 checklist (every setting changed from its default) for after a BIOS flash and "Load Optimized Defaults".
 
 Matching is by the Tweaker (M.I.T.) prompt text, so it also works on a newer BIOS whose variable layout changed.
@@ -6,7 +6,7 @@ Matching is by the Tweaker (M.I.T.) prompt text, so it also works on a newer BIO
 import json
 import os
 
-# Tweaker prompt -> key in the decoded UMC registers (snapshot.json umc.decoded.umcs[*])
+# maps a Tweaker prompt to its key in the decoded UMC registers (snapshot.json umc.decoded.umcs[*])
 TIMINGS = {
     "CAS Latency": "tCL", "tRCDRD": "tRCDRD", "tRCDWR": "tRCDWR", "tRP": "tRP", "tRAS": "tRAS", "tRC": "tRC",
     "tWR": "tWR", "tCWL": "tCWL", "tRRD_S": "tRRDS", "tRRD_L": "tRRDL", "tWTR_S": "tWTRS", "tWTR_L": "tWTRL",
@@ -36,7 +36,7 @@ def _num(v):
 
 def _bios(settings, prompt, menu="Setup > M.I.T.", numeric=False):
     """Value and Auto/MANUAL state of the first matching question. numeric=True skips mode selectors that share
-    the prompt (e.g. 'VDDP Voltage Control' is both the Auto/Manual switch and the mV value). Channel B's timings
+    the prompt (for example 'VDDP Voltage Control' is both the Auto/Manual switch and the mV value). Channel B's timings
     share the prompts and stay Auto unless Memory Timing Mode is Advanced Manual, so they are skipped."""
     for e in settings:
         for loc in e.get("locations") or []:
@@ -119,7 +119,7 @@ def verify_md(snap_dir):
     rows = verify(snap_dir)
     n_ok = sum(r["match"] == "yes" for r in rows)
     n_bad = [r for r in rows if r["match"] == "NO"]
-    out = [f"# BIOS configuration vs running hardware: {os.path.basename(snap_dir)}", "",
+    out = [f"# BIOS configuration against running hardware: {os.path.basename(snap_dir)}", "",
            f"{n_ok} of {len(rows)} checks match, {len(n_bad)} mismatch, the rest cannot be read live.", "",
            "| Setting | BIOS | State | Running | Match |", "|---|---|---|---|---|"]
     out += [f"| {r['item']} | {r['bios']} | {r['state']} | {r['running']} | {r['match']} |" for r in rows]

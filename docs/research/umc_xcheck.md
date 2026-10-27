@@ -1,39 +1,42 @@
-I checked every item in the earlier report ([umc.md](umc.md)) against ZenStates-Core, ZenTimings, CoreFreq, ryzen_monitor, ryzen_smu and the Linux kernel, all cloned or fetched fresh. All the main bit ranges, offsets and formulas are confirmed. I found five things that are wrong, all in side details rather than the timing bit ranges:
+# Cross-check of the DDR4 UMC register map
+
+This note checks every item in [umc.md](umc.md) against ZenStates-Core, ZenTimings, CoreFreq, ryzen_monitor, ryzen_smu and the Linux kernel, all cloned or fetched fresh. It confirms all the main bit ranges, offsets and formulas. Five details are wrong, and none of them is a timing bit range:
 - the "old width" attribution for tFAW and tWR
 - which ZenTimings file held the old hard-coded reader
 - how RDPRE is displayed
 - the claim that the kernel never uses ryzen_smu's index register
 - the line cited for the Vermeer voltage address
 
-The bit widths still can't be checked against AMD documents. I downloaded both public PPRs (56214 rev 3.05 for Vermeer and 55803 rev 0.91 for Rome, via the Wayback Machine). Neither describes the UMC channel registers; they only cover the UMC machine-check registers. Nothing was read from live hardware.
+The bit widths still cannot be checked against AMD documents. Both public PPRs (56214 rev 3.05 for Vermeer and 55803 rev 0.91 for Rome, from the Wayback Machine) cover only the UMC machine-check registers, not the UMC channel registers. Nothing here was read from live hardware.
 
 Sources: ZenStates-Core (ZSC) @869b7e8, ZenTimings (ZT) @7532394, CoreFreq (CF) @20de51c, ryzen_monitor (RM) @7529c7c, ryzen_smu (RS) @d298366 (version 0.1.7), Linux (LX) master fetched 2026-10-24. "DDR4Dict" means `ZSC Dictionaries/DDR4Dictionary.cs`; "CF" means `CF x86_64/amd_reg.h` unless a file is named.
 
-## WRONG
+## Wrong
 
-1. **Old tFAW / tWR width [7:0].** This width came only from the old ZSC dictionary (before fc250cb, for example at d08e0ac). The hard-coded ZenTimings reader always used [6:0], i.e. `GetBits(x,0,7)`:
+1. **Old tFAW / tWR width [7:0].** This width came only from the old ZSC dictionary (before fc250cb, for example at d08e0ac). The hard-coded ZenTimings reader always used [6:0], that is, `GetBits(x,0,7)`:
    - `ZT WPF-no-themes/MainWindow.xaml.cs:569,575`
    - `ZT WPF/MainWindow.xaml.cs` at ca4c163, lines 584 and 590
    
    The other old widths are correct in both places: RDRDSCL [29:24], RDWR [13:8], STAG [26:16], PHYWRL [15:8], PHYRDL [23:16] (no-themes lines 582, 589, 599, 604-605).
-2. **"WPF-no-themes/MainWindow.xaml.cs, last at ca4c163".** The no-themes file still has `ReadTimings` at HEAD (lines 484-638). It is the themed `WPF/MainWindow.xaml.cs` that last had it at ca4c163; it was removed in e3bdf6b (2025-09-20).
-3. **"RDPRE shown as raw+1".** RDPRE is shown as raw+1 only when raw < 2, otherwise as raw (`BaseDramTimings.cs:342-351`). WRPRE is always raw+1 (`:336-340`), as stated.
+2. **"WPF-no-themes/MainWindow.xaml.cs, last at ca4c163".** The no-themes file still has `ReadTimings` at HEAD (lines 484-638). The themed `WPF/MainWindow.xaml.cs` is the file that last had it at ca4c163, and commit e3bdf6b (2025-09-20) removed it.
+3. **"RDPRE shown as raw+1".** ZenTimings shows RDPRE as raw+1 only when raw is below 2, and as raw otherwise (`BaseDramTimings.cs:342-351`). WRPRE is always raw+1 (`:336-340`), as stated.
 4. **"The kernel's SMN traffic doesn't touch ryzen_smu's index register".** This is incomplete:
    - `LX amd_node.c:45-46,138-140` defines `HSMP_INDEX/DATA` as 0xC4/0xC8, the same pair ryzen_smu uses (`RS smu.h:31-32`).
    - The kernel's `amd_smn_hsmp_rdwr()` uses that pair under the kernel's own mutex, not ryzen_smu's.
-   - `amd_smn_read`/`amd_smn_write` do use 0x60/0x64 (`amd_node.c:42-43,121,134`).
-   - A collision needs the hsmp module loaded (check `lsmod`); it was not loaded on the 5800X3D system checked.
+   - `amd_smn_read` and `amd_smn_write` do use 0x60 and 0x64 (`amd_node.c:42-43,121,134`).
+   - A collision needs the hsmp module loaded (check `lsmod`). It was not loaded on the 5800X3D system checked.
 5. **Line cite `Cpu.cs:1450-1458`.** Lines 1450-1451 are the APU case. The Vermeer case is 1455-1459 and Matisse is 1430-1433. Both give the SoC plane 0x5A00C (`Constants.cs:17,21`), so the address itself is correct.
 
-## CONFIRMED
+## Confirmed
 
-**UMC addressing and helpers**
+### UMC addressing and helpers
 - UMC base `i<<20 | 0x50xxx`: `ZSC MemoryConfig.cs:737`, `LX amd64_edac.h:405-409`, `CF:1624`.
-- Up to 12 UMCs probed, stopping once all SMBIOS modules are assigned: `MemoryConfig.cs:24,730-735`.
-- CF lists timing copies at 0x50{200,300,400,500} (`CF:1988` etc.). CF never says these are memory P-states; that reading is an inference.
+- ZSC probes up to 12 UMCs and stops once all SMBIOS modules are assigned (`MemoryConfig.cs:24,730-735`).
+- CF lists timing copies at 0x50{200,300,400,500} (`CF:1988` and nearby lines). CF never says these are memory P-states, so that reading is an inference.
 - `GetBits` (`Utils.cs:54-60`) and `BitSlice` (`Utils.cs:64-73`) work as described.
 
-**Register table.** Every offset and bit range matches DDR4Dict and agrees with CF:
+### Register table
+Every offset and bit range matches DDR4Dict and agrees with CF:
 
 | Register(s) | DDR4Dict lines | CF lines |
 |---|---|---|
@@ -58,74 +61,75 @@ Sources: ZenStates-Core (ZSC) @869b7e8, ZenTimings (ZT) @7532394, CoreFreq (CF) 
 | 0x50254 | 133-137 | 2252-2256 |
 | 0x50258 | 138-144 | 2266-2274 |
 | 0x5028C | 151-155 | 2313-2316 |
-| 0x502A4 | 165-168 | — |
+| 0x502A4 | 165-168 | none |
 | 0x50DF0 / 0x50DF4 | 169-174 | bit 19 MemChannel_Dis at 1969 |
 
-The earlier script's FIELDS list matches all of these.
+The FIELDS list in the umc.md script matches all of these.
 
-**Ratio, refresh and tRFC**
-- Ratio `GetBits(reg,0,7)/3` (`Ddr4Timings.cs:71`) and RM masks with 0x7f (`readinfo.c:190`).
-- CF uses MEMCLK [5:0] (`CF:1993`). This discrepancy is real but doesn't matter at DDR4-3733 (raw value 56).
+### Ratio, refresh and tRFC
+- ZSC computes the ratio as `GetBits(reg,0,7)/3` (`Ddr4Timings.cs:71`), and RM masks with 0x7f (`readinfo.c:190`).
+- CF uses MEMCLK [5:0] (`CF:1993`). This discrepancy is real but does not matter at DDR4-3733 (raw value 56).
 - FGR is [18:16] (`Ddr4Timings.cs:92-93`), mapped to 1x/2x/4x at `:21-33`, and the active tRFC(ns) is chosen at `:42-54` (CF field at `:1799`).
-- tRFC selection and the [10:0]/[21:11]/[31:22] fields: `Ddr4Timings.cs:79-88`, CF `2286-2289`.
-- 0x21060138 decodes to 312/192/132 (I computed it).
-- RM uses the same selection rule (`readinfo.c:233-235`), but masks tRFC and tRFC2 with 0x3ff (10 bits, `:238-240`). RM's tFAW, tWR and tWTRL masks also differ (`:208,211,215`); RM is the outlier.
-- The DIMM0/DIMM1 naming of 0x50260/0x50264 comes only from a CF comment (`CF:2280-2283`).
-- Old ZenTimings read 0x50268/0x5026C only for DDR5 (no-themes `:513-514,522-533`).
+- The tRFC selection and the [10:0], [21:11] and [31:22] fields match (`Ddr4Timings.cs:79-88`, CF `2286-2289`).
+- 0x21060138 decodes to 312, 192 and 132 (computed by hand).
+- RM uses the same selection rule (`readinfo.c:233-235`), but masks tRFC and tRFC2 with 0x3ff (10 bits, `:238-240`). RM's tFAW, tWR and tWTRL masks also differ (`:208,211,215`). RM is the outlier.
+- The DIMM0 and DIMM1 names for 0x50260 and 0x50264 come only from a CF comment (`CF:2280-2283`).
+- Old ZenTimings read 0x50268 and 0x5026C only for DDR5 (no-themes `:513-514,522-533`).
 
-**Bank group swap**
-- BGS logic (`BaseDramTimings.cs:220`; RM `:180-182`; CF `:1627-1648`). CF's sample dumps show only 0x50058 changing between BGS on and off.
-- BGS Alt [10:4] (`BaseDramTimings.cs:221`; CF mask 0x7F0 at `:1673`).
+### Bank group swap
+- The BGS logic matches (`BaseDramTimings.cs:220`; RM `:180-182`; CF `:1627-1648`). CF's sample dumps show only 0x50058 changing between BGS on and off.
+- BGS Alt uses [10:4] (`BaseDramTimings.cs:221`; CF mask 0x7F0 at `:1673`).
 
-**Panel list** (`ZT DDR4TimingsPanel.xaml:28-117`): correct. The panel also has ProcOdt Pu/Pd rows (`:103-104`).
+### Panel list
+The panel list is correct (`ZT DDR4TimingsPanel.xaml:28-117`). The panel also has ProcOdt Pu and Pd rows (`:103-104`).
 
-**Speed and BCLK**
-- Speed calculation: `BaseDramTimings.cs:249,256-271`; ZT displays the floor (`MainViewModel.cs:46,97-104`).
-- PM-table clocks scaled by BCLK/100: `PowerTable.cs:632-645`.
-- BCLK is read from 0xFED80E10 with index = bits [12:4] and fraction = bits [28:25] × 0.0625 (`Mmio.cs:11-27,314-318`).
-- Correction: the index-to-MHz function is an XOR — `index<32 ? index^100 : index^164` (`Mmio.cs:93-98`).
+### Speed and BCLK
+- The speed calculation matches (`BaseDramTimings.cs:249,256-271`), and ZT displays the floor (`MainViewModel.cs:46,97-104`).
+- ZSC scales the PM-table clocks by BCLK/100 (`PowerTable.cs:632-645`).
+- ZSC reads BCLK from 0xFED80E10 with index = bits [12:4] and fraction = bits [28:25] × 0.0625 (`Mmio.cs:11-27,314-318`).
+- Correction: the index-to-MHz function is an XOR, `index<32 ? index^100 : index^164` (`Mmio.cs:93-98`).
 - It returns null when an external clock generator runs in async eCLK mode (`:311-312`).
 - ns = clk × 2000 / MT/s (`Utils.cs:475-480`, `BaseDramTimings.cs:283-287,355-356`).
 
-**Population and memory type**
-- Channel enabled: 0x50DF0 bit 19 = 0 and (0x50000 bit 0 or 0x50008 bit 0) (`MemoryConfig.cs:738-741`).
-- Slot labels: `:750-771`.
-- Rank count from chip selects 2d and 2d+1 (`:675-689`; `LX amd64_edac.h:162,167` and `amd64_edac.c:1201-1213,1447-1470`).
-- Secondary chip-select base at 0x10 (`LX .h:256`); the kernel uses it in its CS-mode logic (`.c:1212-1215`), ZSC doesn't.
-- Memory type comes from SMBIOS (`MemoryConfig.cs:319-334,662`). The 0x50100 &3 line is commented out (`:20-22,172-173`). Old ZT used [1:0] (no-themes `:488`).
+### Population and memory type
+- A channel is enabled when 0x50DF0 bit 19 is 0 and 0x50000 bit 0 or 0x50008 bit 0 is set (`MemoryConfig.cs:738-741`).
+- The slot labels are at `:750-771`.
+- The rank count comes from chip selects 2d and 2d+1 (`:675-689`; `LX amd64_edac.h:162,167` and `amd64_edac.c:1201-1213,1447-1470`).
+- The secondary chip-select base is at 0x10 (`LX .h:256`). The kernel uses it in its CS-mode logic (`.c:1212-1215`), and ZSC does not.
+- The memory type comes from SMBIOS (`MemoryConfig.cs:319-334,662`). The 0x50100 &3 line is commented out (`:20-22,172-173`). Old ZT used [1:0] (no-themes `:488`).
 - The kernel treats UMC_CFG[2:0]==1 as DDR5 only on zn_regs_v2 parts (`LX .c:1570`). Family 19h model 21h falls in no case of `:3846-3887`, so it stays DDR4.
-- DIMM_CFG bits: `MemoryModule.cs:104-114`, `LX .c:1571-1582`, `CF:1719-1726`.
-- SdpInit: `LX .c:1561`, `CF corefreqk.c:7158-7160`.
+- The DIMM_CFG bits match (`MemoryModule.cs:104-114`, `LX .c:1571-1582`, `CF:1719-1726`).
+- SdpInit matches (`LX .c:1561`, `CF corefreqk.c:7158-7160`).
 - RM switches to UMC1 when 0x50200 == 0x300 (`readinfo.c:177-178`; the offset is applied in the macro at `:31-32`).
 
-**Address config discrepancy**
+### Address config discrepancy
 - ZSC reads 0x50040/0x50048 (`MemoryConfig.cs:758,769`).
 - CF uses 0x50030/0x50034 on Zen2/Zen3 (`CF:1675-1679`; `corefreqk.c:7245,7341`, which passes 0x30 as `UMC_DAC`, used at `:7000`).
 - Which one is right is unverified.
 
-**Voltages and PM table**
+### Voltages and PM table
 - VSOC = 1.55 − 0.00625 × VID, VID at [23:16] (`ZT SVI2Plugin.cs:78,85-86`; `Utils.cs:109-112`; `CF:2394,2401`). ZT re-reads while bits [15:8] are non-zero (`SVI2Plugin.cs:57`).
-- PM table rows: `PowerTable.cs:285` (0x240903) and `:300` (0x380905, size 0x5D0).
+- The PM table rows are `PowerTable.cs:285` (0x240903) and `:300` (0x380905, size 0x5D0).
 - An example pm_table dump (5800X3D at DDR4-3733) reads, at these offsets: 0xCC = 1867.2683, 0xC0 = 0xC8 = 1867.2683, 0xB4 = 1.11294, 0x224 = 0.89728, 0x228 = 0x22C = 0.99759. That gives floor(2 × 1867.27) = 3734 MT/s at a BCLK correction of 1.0.
 
-**ryzen_smu access**
-- A 4-byte write means read, an 8-byte write means SMN write (`RS drv.c:238-261`).
-- The access is index/data under the driver's mutex (`smu.c:88-108`).
+### ryzen_smu access
+- A 4-byte write means a read, and an 8-byte write means an SMN write (`RS drv.c:238-261`).
+- The access goes through the index and data registers under the driver's mutex (`smu.c:88-108`).
 - The result is one global value (`drv.c:231-236`).
-- The earlier reader's sequence is the same as the reference `lib/libsmu.c:255-277`.
+- The reader in umc.md uses the same sequence as the reference `lib/libsmu.c:255-277`.
 
-**ProcODT / RTT / drive strengths**
-- No SMN path exists in ZSC (only APOB/AOD files mention ProcOdt) or in CF (no hits).
-- ZT order: APOB first, then WMI "Get APCB Config" (`ZT WPF/MainWindow.xaml.cs:810-835,909-920`). The raw AOD table is used only when that WMI function is missing (`:913-916`); it is a fallback inside the WMI path, not a separate third step.
-- APOB addresses: `Apob.cs:95`. Layout: `ApobMemGeneralConfig.cs:52,77-81,107-127`, with one 8-byte (one byte per channel) array per field at data+0xA4.
-- WMI byte offsets: `BiosMemController.cs:84-97`.
+### ProcODT, RTT and drive strengths
+- Neither ZSC nor CF has an SMN path. In ZSC, only the APOB and AOD files mention ProcOdt, and CF has no hits.
+- ZT reads the APOB first, then WMI "Get APCB Config" (`ZT WPF/MainWindow.xaml.cs:810-835,909-920`). It uses the raw AOD table only when that WMI function is missing (`:913-916`), so the AOD table is a fallback inside the WMI path, not a separate third step.
+- The APOB addresses are at `Apob.cs:95`. The layout (`ApobMemGeneralConfig.cs:52,77-81,107-127`) has one 8-byte array per field at data+0xA4, one byte per channel.
+- The WMI byte offsets are at `BiosMemController.cs:84-97`.
 
-## UNVERIFIED
+## Unverified
 
-- Every UMC bit width against AMD. Only ZSC and CF agree with each other; the public PPRs have no UMC channel registers.
+- Every UMC bit width, against AMD's documents. ZSC and CF agree with each other, but the public PPRs have no UMC channel registers.
 - MEMCLK bit 6.
 - Whether address config lives at 0x30 or 0x40 on Zen3.
-- The actual BCLK on a running system (Linux has no Mmio path; 100 MHz is assumed).
+- The real BCLK on a running system. Linux has no Mmio path, so the code assumes 100 MHz.
 - How ZSC slot labels map to the B550 AORUS PRO silkscreen.
 - Whether Linux `/dev/mem` allows reading the APOB.
 
@@ -133,11 +137,11 @@ The earlier script's FIELDS list matches all of these.
 
 - **Two DIMMs per channel.** With 4 single-rank modules (Channel A and B, DIMM 0 and DIMM 1 in SMBIOS), both 0x50260 and 0x50264 should be programmed.
 - **Failed reads are silent.** If an SMN read fails, ryzen_smu keeps the previous value and still accepts the write (`drv.c:247-248`), so a failure can't be detected from userspace.
-- **`smn` is world-readable.** Its mode is 0644 (`drv.c:57-59,283`): readable by anyone, writable only by root.
+- **`smn` is world-readable.** Its mode is 0644 (`drv.c:57-59,283`), so anyone can read it and only root can write it.
 
 ## Corrected decode function
 
-It passed round-trip tests on synthetic register values, not on live hardware. ctune's maintained copy is `ctune/mem/platforms/zen3_am4/zen3_ddr4_decode.py`. Run it as root with `sudo python3 -I zen3_ddr4_decode.py [pm_mclk_mhz] [bclk_mhz]`; pass 1867.2683 as the PM-table MCLK to reproduce ZenTimings' 3734 MT/s.
+This function passed round-trip tests on synthetic register values, not on live hardware. ctune's maintained copy is `ctune/mem/platforms/zen3_am4/zen3_ddr4_decode.py`. Run it as root with `sudo python3 -I zen3_ddr4_decode.py [pm_mclk_mhz] [bclk_mhz]`; pass 1867.2683 as the PM-table MCLK to reproduce ZenTimings' 3734 MT/s.
 
 ```python
 #!/usr/bin/env python3

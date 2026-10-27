@@ -1,4 +1,5 @@
-"""CPU (Curve Optimizer) API: status, probe/apply/reset (root helper via pkexec), per-core stability test with telemetry.
+"""CPU (Curve Optimizer) API: status, probe, apply and reset (a root helper through pkexec), and a per-core
+stability test with telemetry.
 
 Runtime margins last until reboot, so a crash or reboot puts the BIOS values back. A test that the machine did not
 survive leaves the shared crash marker (ctune.core.stress); the next ctune call in a new boot records it as red.
@@ -29,11 +30,11 @@ def _passwordless():
     return os.geteuid() != 0 and os.path.isfile(RUNTIME)
 
 # The default per-core load is mprime (Prime95) in CoreCycler's modes (ctune/cpu/mprime.py). The "stress-ng" workload
-# is the older alternative: one stress-ng stressor at a time, one thread, pinned to the first logical CPU. Every
-# stressor here checks its own results with --verify (`stress-ng --verifiable`). The mix covers integer, FP, wide
-# vector, FMA and hash work. "bursty" runs at 25 % load in random busy slices of 0 to 0.5 s, so the core keeps
-# waking from idle and ramping into boost, which is where Curve Optimizer errors show up (fixed 10 to 50 ms slices
-# never got past 3.7 GHz in the pm_table here; random slices reached 4.2).
+# is the alternative: one stress-ng stressor at a time, on one thread pinned to the first logical CPU. Every stressor
+# here checks its own results with --verify (`stress-ng --verifiable`). The mix covers integer, FP, wide-vector, FMA
+# and hash work. "bursty" runs at 25 % load in random busy slices of 0 to 0.5 s, so the core keeps waking from idle
+# and ramping into boost, which is where Curve Optimizer errors show up. With fixed 10 to 50 ms slices the pm_table
+# never showed more than 3.7 GHz on the tested core, and random slices reached 4.2 GHz.
 PHASES = [
     ("fft", ["--cpu", "1", "--cpu-method", "fft"]),
     ("int64", ["--cpu", "1", "--cpu-method", "int64"]),
@@ -204,14 +205,14 @@ def _helper(args):
 
 
 def probe():
-    """Read every core's margin through the SMU (MP1 0x48, read-only) and compare with the BIOS values. A match is
-    what allows writes in this boot."""
+    """Read every core's margin through the SMU (MP1 0x48, read-only) and compare them with the BIOS values. Only a
+    match allows writes in this boot."""
     check_interrupted()
     b = bios_co()
     if None in b["cores"]:
         raise ValueError(f"the latest snapshot has no complete Curve Optimizer setting ({b['mode']}): take a mem snapshot")
     out = _helper(["--probe", "--expect", ",".join(str(v) for v in b["cores"])])
-    journal.add(DATA, "note", domain="cpu", text="cpu probe (SMU getter vs BIOS)", ok=out["ok"],
+    journal.add(DATA, "note", domain="cpu", text="cpu probe (SMU getter against BIOS)", ok=out["ok"],
                 probe=out.get("probe"), errors=out.get("errors"), bios_snapshot=b["snapshot"],
                 smu_fw=(out.get("platform") or {}).get("smu_fw"))
     out["bios_co"] = b
@@ -219,7 +220,7 @@ def probe():
 
 
 def plan(core, margin, effective=None):
-    """Dry run: guardrails against the effective margins and the exact mailbox word. Sends nothing."""
+    """Dry run: check the guardrails against the effective margins and show the exact mailbox word. Sends nothing."""
     cur = effective or current()
     before = cur["cores"][core] if isinstance(core, int) and 0 <= core < len(cur["cores"]) else None
     errs = smu.validate_change(core, before, margin)
@@ -239,7 +240,8 @@ def _core_now(core, seconds=3):
 
 
 def apply(core, margin, dry_run=False):
-    """Set one core's margin (root, password prompt). The helper re-checks every guardrail against the hardware."""
+    """Set one core's margin as root (a password prompt unless `ctune passwordless` is installed). The helper re-checks
+    every guardrail against the hardware."""
     check_interrupted()
     p = plan(core, margin)
     if dry_run or not p["ok"]:
@@ -257,7 +259,8 @@ def apply(core, margin, dry_run=False):
 
 
 def reset():
-    """Put every core ctune changed this boot back to its boot (BIOS) value (root, password prompt)."""
+    """Put every core ctune changed this boot back to its boot (BIOS) value, as root (a password prompt unless
+    `ctune passwordless` is installed)."""
     out = _helper(["--reset"])
     journal.add(DATA, "applied", domain="cpu", settings="reset to boot values", ok=out["ok"], reset=out.get("reset"),
                 errors=out.get("errors"))
@@ -294,7 +297,7 @@ def _run_stress(cpu, args, seconds, tmp):
 
 
 class _Sampler(threading.Thread):
-    """1 Hz pm_table telemetry, tagged with the core under test and the phase. Stays off the core under test."""
+    """pm_table telemetry once a second, tagged with the core under test and the phase. It runs on another core."""
 
     def __init__(self, all_cpus):
         super().__init__(daemon=True)
@@ -337,9 +340,9 @@ class _Sampler(threading.Thread):
 def test(cores=None, seconds_per_core=360, order="sequential", note="", record=True, workload="sse-huge",
          full_cycle=False):
     """One thread per core, the given cores in turn (default all). workload: an mprime mode (default sse-huge,
-    CoreCycler's default) or "stress-ng". full_cycle (mprime): run each core until every FFT length has passed once,
-    capped at 40 min, instead of seconds_per_core. Red = a load error, any new corrected machine-check error, or a
-    crash (recorded on the next boot)."""
+    CoreCycler's default) or "stress-ng". full_cycle (mprime) runs each core until every FFT length has passed once,
+    for at most 40 min, instead of seconds_per_core. The test is red on a load error, any new corrected machine-check
+    error, or a crash (recorded on the next boot)."""
     if workload not in WORKLOADS:
         raise ValueError(f"workload is one of {WORKLOADS}")
     check_interrupted()
