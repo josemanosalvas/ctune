@@ -17,7 +17,7 @@ Keep it current: replace stale facts instead of appending, and remove an open qu
 - **CPU.** SMU firmware version, and whether `cpu_probe` read every BIOS margin back on it. Any open question about the SMU commands on this firmware.
 - **GPU.** Model, default and allowed power limit, max boost clock, the stock baseline from `gpu_test` (scores, clocks, power, temperature), what limits each load (power cap, clock lock, temperature), and anything the graphics load needs on this OS.
 - **Memory pressure.** What normally holds RAM and VRAM (desktop apps, swap, local model servers), and how it limits test coverage or blocks the VRAM test.
-- **Crash evidence.** Whether `ctune boot-check` is installed, whether ramoops or another pstore backend is enabled and tested, and where its records land. See [docs/design.md](../../../../docs/design.md) section 3.
+- **Crash evidence.** Whether `ctune boot-check` is installed, whether ramoops or another pstore backend is enabled and tested, and where its records land. See `docs/design.md` section 3.
 - **GPU persistence.** Whether the boot side is installed, and whether `/etc/ctune/gpu.json` exists (what is applied at boot).
 - **Drivers.** Out-of-tree drivers (for example a sensor driver) and how they are rebuilt for each kernel.
 - **Open questions.** What is still unknown about this machine, each with the step that answers it.
