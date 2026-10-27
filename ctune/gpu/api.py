@@ -274,7 +274,7 @@ def vram_cmd(budget_bytes=None):
 
 
 VRAM_ALLOC_RC = 68          # memtest_vulkan's exit when it cannot allocate the buffer it is given (no output)
-VRAM_TRIES, VRAM_STEP_MB = 3, 1024
+VRAM_STEP_MB = 1024
 ALLOC_PROBE_S = 5           # a failed allocation exits at once; a run still alive by then has its buffer
 
 
@@ -284,9 +284,10 @@ def alloc_failed(rc, out):
 
 class VramLoad(stress.Load):
     """memtest_vulkan as a load, for the VRAM test and the mem tests' GPU heat. It exits 68 with no output when it
-    cannot allocate its buffer: free VRAM fell between ctune reading it and the start (for example right after a
-    gpu-burn container exited). start() then retries 1 GiB smaller, up to VRAM_TRIES budgets; the
-    result records the budget that ran and the failed tries."""
+    cannot allocate its buffer: free VRAM fell between ctune reading it and the start, or it is fragmented (after a
+    long uptime with desktop apps the largest block can be several GB below the free total). start() then retries
+    1 GiB smaller down to VRAM_MIN_MB; a failed try ends within seconds. The result records the budget that ran and
+    the failed tries."""
 
     def __init__(self, name, cap_s, budget_bytes=None, optional=False):
         # it writes memtest_vulkan.log into its working directory
@@ -294,9 +295,9 @@ class VramLoad(stress.Load):
         self.cap_s, self.budget, self.attempts = cap_s, budget_bytes or vram_budget_bytes(), []
 
     def start(self):
-        for i in range(VRAM_TRIES):
+        for i in range(64):
             budget = self.budget - (i * VRAM_STEP_MB << 20)
-            if i and budget < 512 << 20:
+            if i and budget < VRAM_MIN_MB << 20:
                 break
             self.used = budget
             self.cmd = ["timeout", "-s", "INT", str(self.cap_s)] + vram_cmd(budget)   # ends by itself if ctune dies
@@ -386,8 +387,8 @@ def _burn(mode, seconds, h, mark=None):
         return {"ok": False, "unavailable": True, "mode": mode,
                 "errors": [f"only {free} MiB of VRAM free; gpu-burn {mode} needs {burn.MIN_MB[mode] + 1024}"]}
     # NVML's free VRAM is not always one allocatable block, so gpu-burn's start-up allocation can fail with VRAM to
-    # spare. A start-up out-of-memory retries 512 MB smaller; the score does not depend on the buffer size (it sets
-    # how many result matrices gpu-burn keeps, not the work per matrix).
+    # spare. A start-up out-of-memory retries 512 MB smaller, down to the mode's minimum; the score does not depend on
+    # the buffer size (it sets how many result matrices gpu-burn keeps, not the work per matrix).
     retries = []
     while True:
         cidfile = os.path.join(tempfile.mkdtemp(prefix="ctune-gpu-burn-"), "cid")
@@ -404,7 +405,7 @@ def _burn(mode, seconds, h, mark=None):
             burn.cleanup(cidfile)
         out = {**r["loads"][0], "mode": mode, "seconds": seconds, "mb": mb}
         oom = any("out of memory" in e for e in out.get("errors", [])) and not out.get("gflops_median")
-        if not oom or len(retries) >= 2 or mb - 512 < burn.MIN_MB[mode]:
+        if not oom or mb - 512 < burn.MIN_MB[mode]:
             break
         retries.append({"mb": mb, "error": next(e for e in out["errors"] if "out of memory" in e)})
         mb -= 512
