@@ -3,7 +3,7 @@
 
 `ctune passwordless` installs this file with ram_snapshot.py, zen3_ddr4_decode.py, am4_bios_memcfg.py and
 dump_fw_mem.py, owned by root, in /usr/local/libexec/ctune/mem/zen3_am4, and a polkit rule lets one user run this
-file through pkexec with no password (docs/research/reuse-decisions.md). ram_snapshot.py, run as the user, calls it,
+file through pkexec with no password (docs/design.md section 2). ram_snapshot.py, run as the user, calls it,
 decodes the output and writes the snapshot.
 
 Any process running as that user can call it, so it takes nothing from the caller but --skip-devmem. It only reads:

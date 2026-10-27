@@ -1,6 +1,6 @@
 # Zen 3 and DDR4 tuning rules
 
-Sources are the integralfx DDR4 OC guide, Taraquin's OCN Zen 3 guide (with anta777's formulas), the ZenStates-Core register map and PCGH's 5800X3D scaling test. The research with citations is in `docs/research/` and `docs/REVIEW-2026-10-24.md`.
+Sources are the integralfx DDR4 OC guide, Taraquin's OCN Zen 3 guide (with anta777's formulas), the ZenStates-Core register map and PCGH's 5800X3D scaling test. The research with citations is in `docs/research/`.
 
 ## Timings
 - tRC = tRAS + tRP, and tRAS ≥ tRCD + tRTP.
@@ -16,7 +16,7 @@ Sources are the integralfx DDR4 OC guide, Taraquin's OCN Zen 3 guide (with anta7
 ## Voltages and fabric
 - The target is FCLK = UCLK = MCLK. Above the CPU's fabric ceiling you get corrected errors in the fabric or PCIe banks, or random reboots at idle.
 - VDDG must sit at least 40 mV under the real VSOC (the cLDO dropout). VDDP must sit at least 0.1 V under VDIMM and at most 1.05 V. Some single VDDP values fail while their neighbours work.
-- SoC voltage above about 1.15 V can reduce stability. Four DIMMs need more SoC voltage than two. A user with this board and kit reported needing at least 1.12 V.
+- SoC voltage above about 1.15 V can reduce stability. Four DIMMs need more SoC voltage than two. One report from a B550 AORUS PRO with four DIMMs needed at least 1.12 V.
 - At high FCLK, PCIe link errors sometimes disappear when the chipset or GPU link is forced to PCIe Gen3.
 - ProcODT for 4 × 8 GB is usually 28 to 48 Ω. With two DIMMs per channel, RttNom matters because the idle DIMM terminates the bus. RTT 6/3/3 (in RZQ divisors) is a common starting point and fails on some kits.
 

@@ -1,7 +1,7 @@
 """Imported by every test module: offline tests may not start podman, a privileged helper or a stress tool.
 
-On 2026-10-27 a unit test reached gpu.test for real, and its podman run replaced the GPU campaign's running gpu-burn
-container. Any such command now raises before it starts; a test that needs one mocks it.
+A unit test that reached gpu.test for real could start podman beside a campaign's running gpu-burn container and
+replace it. Any such command raises before it starts; a test that needs one mocks it.
 """
 import os
 import subprocess

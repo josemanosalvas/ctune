@@ -3,11 +3,11 @@
 **The per-core setter is MP1 0x35 and the all-core setter is MP1 0x36.** Earlier notes had them the other way round. Three independent sources agree. The per-core getter MP1 0x48 has only one source, so ctune treats it as unverified on a machine until a read-only probe returns the BIOS values for every core.
 
 ## Sources
-Each was cloned and pinned to a commit on 2026-10-25.
+Each is pinned to a commit.
 - **ZSC.** irusanov/ZenStates-Core @869b7e8, the C# library behind ZenTimings and ryzen-smu-cli. CoreCycler drives ryzen-smu-cli.
 - **UXTU.** JamesCJ60/Universal-x86-Tuning-Utility @eeb4304, `Universal x86 Tuning Utility/Scripts/AMD Backend/RyzenSmu.cs`.
 - **ruv.** svenlange2/Ryzen-5800x3d-linux-undervolting @c08815d, `ruv.py`, a Linux script for the 5800X3D on ryzen_smu. Its README shows set and readback output on that CPU.
-- **RSMU.** amkillam/ryzen_smu @d298366 (`smu.c`, `smu.h`, `drv.c`), driver 0.1.7, the same version that is loaded here.
+- **RSMU.** amkillam/ryzen_smu @d298366 (`smu.c`, `smu.h`, `drv.c`), driver 0.1.7, the version ctune was checked against.
 - **CC.** sp00n/corecycler @a95b523, `configs/default.config.ini`, for the test method.
 
 ## Command IDs (MP1 mailbox)
@@ -43,8 +43,8 @@ Each was cloned and pinned to a commit on 2026-10-25.
 - **Addresses.** ryzen_smu uses MP1 cmd 0x3B10530, rsp 0x3B1057C and args 0x3B109C4 for Vermeer (`smu.c` L528-531). ZSC Zen3Settings.cs L11-13 and UXTU L393-395 agree.
 - **Sysfs protocol.** Write exactly 24 bytes (six little-endian u32) to `smu_args`. Any other size is ignored (`drv.c` L223-228). Then write a 4-byte ID to `mp1_smu_cmd` (`drv.c` L169-186). Reading `mp1_smu_cmd` returns the status (1 = OK). Reading `smu_args` returns the six response words.
 - **The status cannot prove a write took effect.** `smu_send_command` (`smu.c` L201-213) reports a failure only when the retries run out. A quick error response such as 0xFE (unknown command) or 0xFA (invalid argument) falls through, and the driver returns OK. ctune therefore reads the margin back with 0x48 after every write.
-- **The argument buffer is shared.** `smu_args` is one buffer for every process using the driver, and the write and the command are two separate syscalls. ctune's helper serialises its own calls with a lock file. Nothing else on this machine sends SMU commands.
-- **Driver identification.** `codename` 12 is CODENAME_VERMEER (`smu.h` L66-79). `mp1_if_version` 2 is IF_VERSION_11 (`smu.h` L100-103). This CPU reports family 25 (0x19) and model 33 (0x21).
+- **The argument buffer is shared.** `smu_args` is one buffer for every process using the driver, and the write and the command are two separate syscalls. ctune's helper serialises its own calls with a lock file; another program sending SMU commands at the same time could still interleave with it.
+- **Driver identification.** `codename` 12 is CODENAME_VERMEER (`smu.h` L66-79). `mp1_if_version` 2 is IF_VERSION_11 (`smu.h` L100-103). A 5800X3D reports family 25 (0x19) and model 33 (0x21).
 
 ## Test method (CoreCycler defaults, CC config)
 - Prime95 SSE with Huge FFTs (L47, L247, L265), one thread on the first logical CPU of the core (L136, L145).
@@ -55,9 +55,9 @@ Each was cloned and pinned to a commit on 2026-10-25.
 
 ## Open points
 - **0x48 has one source.** `ctune cpu probe` checks it: the readback must equal the BIOS Curve Optimizer of every core, from the latest snapshot. The root helper refuses to write until a probe in the same boot has matched. Re-run the probe after every BIOS or SMU firmware change.
-- **Checked on this machine on 2026-10-25** (5800X3D, BIOS F16b, SMU 56.74.0, ryzen_smu 0.1.7):
-  - 0x48 returned -20, -30, -30, -20, -20, -30, -30, -30, which is the BIOS per-core setting exactly. The mixed pattern rules out a constant or a coincidence, and it confirms the sign-extended 32-bit return.
+- **Checked on a 5800X3D** (B550 AORUS PRO, BIOS F16b, SMU 56.74.0, ryzen_smu 0.1.7):
+  - With BIOS per-core margins of -20, -30, -30, -20, -20, -30, -30, -30, 0x48 returned exactly those values. The mixed pattern rules out a constant or a coincidence, and it confirms the sign-extended 32-bit return.
   - 0x35 with arg0 0x0010FFE2 (core 1, -30, a no-op) returned status OK and read back -30.
   - Both runs left zero corrected machine-check errors and no kernel SMU messages. A 1-minute screen of core 1 afterwards was green.
-  - Still open: whether 0x35 sets an absolute value or adds to the current one. A no-op at -30 cannot tell the two apart, because -30 is the floor. Setting a -30 core to -25 can: an absolute setter reads back -25, and an additive one reads back -30, because -55 clamps. The check is queued as the first cpu change in `.claude/skills/ctune/reference/this-machine.md`.
+  - Still open: whether 0x35 sets an absolute value or adds to the current one. A no-op at -30 cannot tell the two apart, because -30 is the floor. Setting a -30 core to -25 can: an absolute setter reads back -25, and an additive one reads back -30, because -55 clamps, and `cpu_apply` reports the mismatch.
 - **PBO2 Tuner** is closed source, so it was not checked directly. CoreCycler drives ryzen-smu-cli, which is built on ZSC.

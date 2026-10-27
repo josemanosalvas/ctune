@@ -284,8 +284,8 @@ def alloc_failed(rc, out):
 
 class VramLoad(stress.Load):
     """memtest_vulkan as a load, for the VRAM test and the mem tests' GPU heat. It exits 68 with no output when it
-    cannot allocate its buffer: free VRAM fell between ctune reading it and the start (twice on 2026-10-27, once
-    right after a gpu-burn container exited). start() then retries 1 GiB smaller, up to VRAM_TRIES budgets; the
+    cannot allocate its buffer: free VRAM fell between ctune reading it and the start (for example right after a
+    gpu-burn container exited). start() then retries 1 GiB smaller, up to VRAM_TRIES budgets; the
     result records the budget that ran and the failed tries."""
 
     def __init__(self, name, cap_s, budget_bytes=None, optional=False):

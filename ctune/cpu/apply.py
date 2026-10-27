@@ -10,7 +10,7 @@ the value ctune last left there, and the change stays within -30..30 and 5 per s
 The command IDs and encoding are cited in ctune/cpu/smu.py.
 
 `ctune passwordless` installs this file and smu.py, owned by root, in /usr/local/libexec/ctune/cpu, and a polkit rule
-lets one user run it through pkexec with no password (docs/research/reuse-decisions.md). Any process running as
+lets one user run it through pkexec with no password (docs/design.md section 2). Any process running as
 that user can then call it, so the installed copy keeps its state in the root-owned /run/ctune (cleared at boot) and
 refuses --state and --owner: a state file the caller could write would let it skip the probe and value checks.
 Calls take an exclusive lock, so two at once cannot lose a margin from the state. The guardrails bind each call: a

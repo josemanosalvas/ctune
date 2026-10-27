@@ -65,8 +65,8 @@ def setup():
 
 def cmd(mode, seconds, mb, cidfile):
     """podman run for one gpu-burn run. Options go before the time, which must be last."""
-    # No --replace, and every later podman call names this run's container ID (cidfile), never NAME: on 2026-10-27
-    # a ctune run from another data directory replaced the campaign's running container and turned its step red.
+    # No --replace, and every later podman call names this run's container ID (cidfile), never NAME: a ctune run from
+    # another data directory must never replace or stop a campaign's running container.
     # --timeout: conmon stops the container even if ctune dies (it runs outside the test's cgroup).
     return ["podman", "run", "--rm", "--init", f"--cidfile={cidfile}", f"--timeout={seconds + 120}", "--name", NAME,
             "--pull=never", "--network=none",

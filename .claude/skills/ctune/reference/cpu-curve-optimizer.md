@@ -26,7 +26,7 @@ A step is **red** on any of these:
 - A freeze or reboot. The next ctune call (or the boot-check unit, if installed) writes the red result: the core and phase that were running, `crashed_boot_error_lines` and `crashed_boot_kernel_tail` from the crashed boot, and `next_boot_hardware_lines` from the boot after it, including the `Previous system reset reason` line. Read those first, then run the record's `next_step` (`journalctl -k -b <crashed_boot_id>`). If `journal_lost` is true, the journal has already rotated; check `saved_boot_files`.
 
 ## Reading results
-- Compare `voltage_v_avg` and `eff_ghz_avg` of the `p95` phase with a baseline of the same `workload` on the same core. The `suspended` phase is the 1 s pause, so it is not a score. A more negative margin gives lower voltage at the same clock and a lower `temp_c_max`. Record a fresh mprime baseline before the first step: earlier stress-ng results have other phase names.
+- Compare `voltage_v_avg` and `eff_ghz_avg` of the `p95` phase with a baseline of the same `workload` on the same core. The `suspended` phase is the 1 s pause, so it is not a score. A more negative margin gives lower voltage at the same clock and a lower `temp_c_max`. Record an mprime baseline before the first step.
 - The pm_table averages clocks over its sample window. It shows sustained clocks, not the momentary single-core peak.
 - mprime's `passed`, `passed_sizes` and `tests_completed` count work done, not speed; only a failure (`failed_size_k`, errors) counts against a core.
 

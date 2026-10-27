@@ -10,7 +10,7 @@
 
 ctune helps an agent tune RAM, CPU and GPU on an AMD Ryzen + NVIDIA Linux system. The agent runs campaigns of single-variable steps. ctune applies or verifies each change, measures stability as corrected machine-check errors, stress-test verification errors and NVIDIA Xid errors, scores performance, and logs every step in a journal. The name is a nod to C'Thun, and the mascot is Claude Code's Clawd crossed with it.
 
-It is a personal tool for a Ryzen 7 5800X3D on a B550 AORUS PRO with DDR4 and an RTX 3080 Ti. The layout leaves room for an AM5 and DDR5 version later.
+**Supported hardware:** AMD Zen 3 on AM4 with DDR4, with a BIOS setup decoder for the Gigabyte B550 AORUS PRO, and NVIDIA GPUs through NVML. ctune is tested on a Ryzen 7 5800X3D, a B550 AORUS PRO rev 1.0 with DDR4 and an RTX 3080 Ti, on Bazzite. Other Zen 3 boards read timings and SMU values the same way; their BIOS menus need their own decoder keys. The layout leaves room for AM5 and DDR5 later.
 
 ## Domains
 - **mem** reads, and never writes, the memory configuration. It decodes timings per channel from the memory controller (over SMN through `ryzen_smu`), SMU clocks and voltages, every BIOS setup option by menu path (from the EFI variables and the BIOS's HII form database), and, after one boot with `iomem=relaxed`, the trained ProcODT/RTT/CAD values and SPD. The user makes every BIOS change; ctune verifies it with a snapshot and a diff. Stability tests run stressapptest over the free RAM while memtest_vulkan heats the case, plus NVMe reads and an idle soak for fabric checks.
@@ -44,7 +44,7 @@ bin/ctune signoff --detach               # about 5 h 30 min: ram, ycruncher, cpu
 bin/ctune test-status                    # the running test and its phase, or the last result
 bin/ctune test-stop                      # stop the running detached test
 ```
-Agents get the same commands as an MCP server (`ctune/mcp_server.py`, standard library only), except the one-time setup commands `gpu burn-setup`, `gpu q2rtx-setup`, `gpu persist-setup`, `gpu persist-selftest` and `boot-check`, registered for this project in `.mcp.json`. The campaign skill and its references live in `.claude/skills/ctune/`.
+Agents get the same commands as an MCP server (`ctune/mcp_server.py`, standard library only), except the one-time setup commands `gpu burn-setup`, `gpu q2rtx-setup`, `gpu persist-setup`, `gpu persist-selftest` and `boot-check`. `.mcp.json` registers it for this project: it starts the server from `$CLAUDE_PROJECT_DIR`, which Claude Code sets to the project root, so it needs no local path. To register it elsewhere: `claude mcp add ctune -- python3 -I <repo>/ctune/mcp_server.py`. The campaign skill and its references live in `.claude/skills/ctune/`; the agent keeps the machine's own facts and history in `data/this-machine.md`, created from `.claude/skills/ctune/reference/this-machine.template.md`.
 
 ## Layout
 - `ctune/core/`: journal, machine-check counters, sensors, paths, the shared test runner (`stress.py`), the sign-off suite and the detached runner.
@@ -52,11 +52,11 @@ Agents get the same commands as an MCP server (`ctune/mcp_server.py`, standard l
 - `ctune/cpu/`: SMU mailbox and pm_table access, the guarded root helper, and the per-core test runner.
 - `ctune/gpu/`: NVML binding (ctypes), the guarded root helper, the test runner, and persistence (`persist.py`, the pkexec installer `install.py`, and `boot_apply.py`, which is installed as a root-owned copy).
 - `tests/`: offline tests (`python3 -B -m unittest discover -s tests`).
-- `data/` (gitignored): snapshots, `journal.jsonl`, `cpu_state.json`, `gpu_state.json`.
+- `data/` (gitignored, or `$CTUNE_DATA`): snapshots, `journal.jsonl`, `cpu_state.json`, `gpu_state.json`, and `this-machine.md`.
 - `tools/` (gitignored): memtest_vulkan v0.5.0 and vkpeak 20260527 from their GitHub releases, y-cruncher v0.8.7.9547 (static Linux build from its GitHub release), stressapptest v1.0.11 built from source (`./configure && make`, binary in `tools/stressapptest/`), mprime 30.19b20 from mersenne.org (EULA: never commit it), the gpu-burn source at a pinned commit (`ctune gpu burn-setup` builds the image), nvidia_oc 0.1.24 built from a pinned commit (`ctune gpu persist-setup`), and Quake II RTX 1.8.1 with the Steam Linux Runtime sniper it runs in (`ctune gpu q2rtx-setup`, SHA256 pinned). `docs/research/reuse-tools.md` and `docs/research/gpu-graphics-loads.md` have the sources.
 - `ctune/mascot.py`: the mascot as pixel sprites, and the banner `ctune status` prints in a terminal.
 - `docs/brand/`: logo, wordmark, icons, animation and social preview; `python3 docs/brand/build.py` regenerates them from `ctune/mascot.py` (needs Pillow).
-- `docs/`: the first RAM review and the research notes with their sources.
+- `docs/`: the design notes (`design.md`: GPU persistence, the passwordless root path, crash evidence, the BIOS decoder) and the research notes with their sources.
 
 ## Roadmap
 1. A read-only root helper allowed by a polkit rule, so steps need no password prompt, then an unattended loop: a post-boot or post-apply runner that tests, writes the journal, and wakes the agent through a T3 webhook.

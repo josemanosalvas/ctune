@@ -1,11 +1,12 @@
 """Detached test runs as systemd user units, so a long test outlives the terminal, the agent session and logout.
 
 Each run is a transient unit `ctune-run-<kind>-<timestamp>.service` started with `systemd-run --user` (lingering is
-on). The settings come from the systemd 259 man pages and probe units on this machine (docs/research/reuse-tools.md):
+on). The settings come from the systemd 259 man pages and probe units (docs/research/reuse-tools.md):
 - KillMode=mixed + KillSignal=SIGINT: `systemctl --user stop` raises KeyboardInterrupt in Python, so `finally`
   blocks stop the loads; systemd then SIGKILLs whatever is left in the unit's cgroup. The default SIGTERM skips them.
   A gpu-burn container runs in podman's own scope, outside that cgroup, so podman's --timeout caps it instead.
-- TimeoutStopSec=90s + TimeoutStopFailureMode=kill: this machine sets 15 s and Fedora aborts (SIGABRT) by default.
+- TimeoutStopSec=90s + TimeoutStopFailureMode=kill: a system default can be as short as 15 s, and Fedora aborts
+  (SIGABRT) by default.
 - OOMPolicy=continue: a kernel OOM kill of one stress child must not stop the whole test.
 - --expand-environment=no: systemd would expand ${...} and $$ inside the JSON spec. python3 -u: -I ignores
   PYTHONUNBUFFERED, and the log would fill only at exit.

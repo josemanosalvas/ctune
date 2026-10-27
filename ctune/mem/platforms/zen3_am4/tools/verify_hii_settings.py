@@ -16,6 +16,9 @@ Format sources (UEFI Spec 2.10 + EDK2 headers):
       VARSTORE 0x24: Guid, VarStoreId(UINT16), Size(UINT16), Name(CHAR8[])
       VARSTORE_EFI 0x26: VarStoreId(UINT16), Guid, Attributes(UINT32), Size(UINT16), Name(CHAR8[])
   * efivarfs file = UINT32 attributes + data  (Linux Documentation/filesystems/efivarfs.rst)
+
+Usage: CTUNE_SNAPSHOT=data/snapshots/<name> python3 -I verify_hii_settings.py [OUT.json]. The other verify_* tools
+import this module and read the same snapshot.
 """
 import json
 import os
@@ -23,10 +26,9 @@ import struct
 import sys
 import uuid
 
-BASE = "/var/home/josemanosalvas/.t3/scratch/2026-10-24-snapshot-the-current-ram-settings-01633672"
-SNAP = BASE + "/snapshots/20261024-181828_F16b"
-HII = SNAP + "/raw/fwmem/hiidb.bin"
-EFIV = SNAP + "/raw/efivars"
+SNAP = os.environ.get("CTUNE_SNAPSHOT", "")   # a ctune snapshot directory
+HII = os.path.join(SNAP, "raw", "fwmem", "hiidb.bin")
+EFIV = os.path.join(SNAP, "raw", "efivars")
 
 OPN = {0x01: "FORM", 0x02: "SUBTITLE", 0x03: "TEXT", 0x05: "ONE_OF", 0x06: "CHECKBOX", 0x07: "NUMERIC",
        0x08: "PASSWORD", 0x09: "OPTION", 0x0A: "SUPPRESS_IF", 0x0E: "FORM_SET", 0x0F: "REF",
@@ -171,6 +173,8 @@ def parse_forms(pkg, strs, base_off):
 
 
 def main():
+    if not SNAP:
+        sys.exit("set CTUNE_SNAPSHOT to a ctune snapshot directory (data/snapshots/<name>)")
     data = open(HII, "rb").read()
     lists = walk_db(data)
     allq = []

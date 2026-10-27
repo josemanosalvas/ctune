@@ -4,7 +4,7 @@
 Source 1, the AOD buffer: the "AMD AOD" SSDT declares OperationRegion(AODT|AODE, SystemMemory, base, len)
 in ACPI NVS. ZenTimings' BiosMemController.Resistances overlays the start of that buffer (WMI
 RunCommand 0x00010001 "Get APCB Config" returns a copy of it).
-Source 2, the APOB: the "APOB" table at a fixed physical address (0xA200000 on this board's E820 map).
+Source 2, the APOB: the "APOB" table at a fixed physical address (0xA200000 on the B550 AORUS PRO's E820 map).
 Its MEM/type-2 entry has the per-channel ProcODT, RTT, setup and drive strength values. ZenTimings
 prefers this source.
 
@@ -12,7 +12,7 @@ Both live in ACPI NVS. When CONFIG_IO_STRICT_DEVMEM=y, /dev/mem refuses those pa
 was booted with iomem=relaxed.
 Offline use: --ssdt FILE  --region-file FILE  --apob-file FILE  --pm-table FILE
 
-Added 2026-10-24 (printed after the PM table; the three sections above are unchanged):
+Further sections (printed after the PM table; the three sections above keep their output):
   * more of the APOB, following irusanov/ZenStates-Core 869b7e8 Hardware/Apob/*.cs: the entry list, the DDR4
     channel timing blocks with MR0-MR6 (GEN 7/3), the DIMM SPD copies (MEM 1/17) with a DDR4 SPD + XMP 2.0
     decode, the SMBIOS memory info (8/8), the APCB boot info (1/16), the ABL event log and training status,
@@ -315,7 +315,7 @@ def pm(args):
     print("  " + ", ".join(f"{k} {struct.unpack_from('<f', pt, o)[0]:.4f}" for k, o in offs.items()))
 
 # =====================================================================================================
-# Added 2026-10-24. Sources (pinned): irusanov/ZenStates-Core 869b7e82 (ZSC), openSIL 9648171d
+# APOB, SPD, Easy* and NVS sections. Sources (pinned): irusanov/ZenStates-Core 869b7e82 (ZSC), openSIL 9648171d
 # xUSL/Include/ApobCmn.h, EDK2 0a503bc2 MdeModulePkg/Core/Dxe/Mem/Pool.c, coreboot 80dd4ace
 # src/include/device/dram/ddr4.h + src/device/dram/ddr4.c (DDR4 MR fields), JEDEC JESD79-4 sec. 3.5 (MR0-MR6)
 # and JESD21-C Annex L (DDR4 SPD). File:line references are to those commits.
@@ -1232,7 +1232,7 @@ def range_of(ranges, addr):
 
 def readable_type(rng):
     """Only DRAM-backed firmware ranges are read: NVS / ACPI tables, or 'Reserved' below 0xC0000000 (the DRAM
-    below the 32-bit MMIO hole on this board; Reserved ranges above it include MMIO such as 0xFED80000)."""
+    below the 32-bit MMIO hole on the B550 AORUS PRO; Reserved ranges above it include MMIO such as 0xFED80000)."""
     return rng is not None and (rng[2] in (NVS, "ACPI Tables") or (rng[2] == "Reserved" and rng[1] < 0xC0000000))
 
 

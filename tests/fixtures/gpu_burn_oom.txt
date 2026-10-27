@@ -13,7 +13,7 @@ https://developer.nvidia.com/ngc/nvidia-deep-learning-container-license
 
 A copy of this license is made available in this container at /NGC-DL-CONTAINER-LICENSE for your convenience.
 
-GPU 0: NVIDIA GeForce RTX 3080 Ti (UUID: GPU-fa9f0f08-73aa-d991-ff7b-fe358ec07953)
+GPU 0: NVIDIA GeForce RTX 3080 Ti (UUID: GPU-12345678-1234-1234-1234-123456789abc)
 Couldn't init a GPU test: Error in A alloc (gpu_burn-drv.cpp:201): out of memory
 Using compare file: compare.fatbin
 Burning for 20 seconds.
@@ -24,4 +24,5 @@ read[0] error 0
 No clients are alive!  Aborting
 Using compare file: compare.fatbin
 Burning for 20 seconds.
-5.0%  proc'd: -1 (0 Gflop/s)   errors: 1792925923  (DIED!)  temps: 54 C 
+
+5.0%  proc'd: -1 (0 Gflop/s)   errors: 1792925923  (DIED!)  temps: 54 C 

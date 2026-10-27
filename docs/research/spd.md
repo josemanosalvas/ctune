@@ -1,17 +1,17 @@
 **FCH SMBus / DDR4 SPD on Bazzite (B550 AORUS PRO, 5800X3D, kernel 7.2.9)**
 
-The most likely reason the adapter is missing is an ACPI resource conflict at I/O port 0xB00, but I could not confirm it: reading the kernel log needs root, and the early-boot lines are gone. Everything below was checked without root, and nothing was written to the SMBus.
+The most likely reason the adapter is missing is an ACPI resource conflict at I/O port 0xB00, but it is not confirmed: reading the kernel log needs root. Everything below was checked without root, and nothing was written to the SMBus.
 
-## Facts checked on this machine
+## Facts checked on a B550 AORUS PRO (Bazzite, kernel 7.2.9)
 - **SMBus location:** the controller is 00:14.0 [1022:790b], rev 0x61, subsystem 1458:5001. It sits on root bus 00, inside the CPU's FCH. The B550 chipset's devices (1022:43ee, 43eb, 43e9) are on bus 02. So the SMBus is not part of the B550 chipset.
 - **The driver is loaded but not attached.** `lspci -k -s 00:14.0` lists "Kernel modules: i2c_piix4, sp5100_tco" with no "Kernel driver in use" line.
   - `/sys/bus/pci/devices/0000:00:14.0/driver` does not exist, and `/sys/bus/pci/drivers/piix4_smbus/` has no device link. So `i2c_piix4` tried to probe 00:14.0 and failed.
   - Neither `/proc/ioports` nor `/proc/iomem` shows a `piix4_smbus` or `sb800_piix4_smb` entry.
 - **ACPI resource checking is at its default (strict).** `/proc/cmdline` has no `acpi_enforce_resources=` option.
-- **Why the failure reason can't be read yet:**
-  - `kernel.dmesg_restrict=1`.
-  - The journal for this boot starts about 148,644 s after boot (uptime is about 255,209 s). The oldest lines were deleted by log spam from the `stash` process.
-- **Memory is 4 DIMMs, not 2.** Your earlier udev capture (`raw/dmi_memory_udev.txt`) shows 4 filled slots, each DDR4 8 GiB, single rank. Part number is "4400 C19 Series" and the module manufacturer ID is Bank 6, Hex 0x02, which decode-dimms' JEP106 table maps to "Patriot Memory".
+- **Why the failure reason can be hard to read:**
+  - `kernel.dmesg_restrict=1` hides dmesg from non-root users.
+  - The probe runs early in boot, so on a long-running system its lines can rotate out of the journal.
+- **Example population.** SMBIOS type 17 (as udev's `dmi_memory_id` reports it) shows 4 filled slots, each DDR4 8 GiB, single rank. The module manufacturer ID is Bank 6, Hex 0x02, which decode-dimms' JEP106 table maps to "Patriot Memory".
 - **Installed:**
   - i2c-tools-4.4-4.fc44: `i2cdetect`, `i2cdump`, `i2cget`, `i2cset`, `i2ctransfer`, `eeprog`.
   - dmidecode-3.7, acpica-tools (`acpidump`, `iasl`), perl 5.42 with the modules decode-dimms needs, distrobox 1.8.2.5 and podman.
@@ -50,7 +50,7 @@ The memory-mapped access does not get around the step 5 check. That path is only
 **Commands to confirm (root):**
 ```
 sudo dmesg | grep -iE 'piix4|sb800|OpRegion|Resource conflict|0B00|fed80300'
-# boot lines are gone from the journal here, so re-run the probe (module has 0 users):
+# if the boot lines have rotated out of the journal, re-run the probe (module has 0 users):
 sudo modprobe -r i2c_piix4 && sudo modprobe i2c_piix4 && sudo dmesg | tail -n 15
 # find which ACPI code owns 0xB00:
 mkdir -p ~/acpi && cd ~/acpi && sudo acpidump -b && sudo chown "$USER" ./*.dat
@@ -61,7 +61,7 @@ grep -n -i 'SystemIO' *.dsl | grep -iE '0x0B[0-9A-F]{2}|SMB'
 **Fix on Bazzite.** `lax` makes the check log a warning and continue instead of failing. The kernel then prints "Resource conflict: System may be unstable or behave erratically" (osl.c L1522-1526). Firmware code and `i2c_piix4` can then use the SMBus at the same time with nothing coordinating them. The it87 docs describe the same kind of risk, plus reports of boot failures with system-wide lax (`Documentation/hwmon/it87.rst` L212-221).
 - **One boot only (preferred):** at the GRUB menu press `e`, add `acpi_enforce_resources=lax` to the `linux` line, then press Ctrl-X.
 - **Persistent:** `sudo rpm-ostree kargs --append-if-missing=acpi_enforce_resources=lax`, then `systemctl reboot`.
-  - The man page says this creates a new deployment from the default (next-boot) one. There is a staged 44.20261023 update pending, so that reboot also applies the update.
+  - The man page says this creates a new deployment from the default (next-boot) one. If an update is staged, that reboot also applies it.
   - To undo: `sudo rpm-ostree kargs --delete-if-present=acpi_enforce_resources=lax`.
 - **Verify after reboot:**
   ```
@@ -73,7 +73,7 @@ grep -n -i 'SystemIO' *.dsl | grep -iE '0x0B[0-9A-F]{2}|SMB'
 
 ## (2) Cleanest way to read the SPD
 - **It should happen automatically.** Since v6.11 (present in v6.11, absent in v6.10), port 0 calls `i2c_register_spd_write_enable` (i2c-piix4.c L968-974).
-  - That code counts the memory slots in DMI. If every filled slot is DDR4 (type 0x1A), it creates an "ee1004" device at 0x50+n for each slot (n<4 here) (`drivers/i2c/i2c-smbus.c` L374-475, specifically L434-436 and L462).
+  - That code counts the memory slots in DMI. If every filled slot is DDR4 (type 0x1A), it creates an "ee1004" device at 0x50+n for each slot (n<4 on a four-slot board) (`drivers/i2c/i2c-smbus.c` L374-475, specifically L434-436 and L462).
   - It checks each address with a one-byte read, not a write, in the 0x50-0x5F range (`drivers/i2c/i2c-core-base.c` L2456-2462), and logs "Successfully instantiated SPD at 0x50" (L470).
   - If SPD byte 14 bit 7 says a thermal sensor exists, ee1004 also loads jc42 at 0x18-0x1B (`drivers/misc/eeprom/ee1004.c` L183-213).
 - **Check:** `ls /sys/bus/i2c/drivers/ee1004/`
@@ -95,10 +95,10 @@ grep -n -i 'SystemIO' *.dsl | grep -iE '0x0B[0-9A-F]{2}|SMB'
   head -c 1 /sys/bus/i2c/drivers/ee1004/*-0050/eeprom >/dev/null   # optional: leaves page 0 selected, see (4)
   ```
 - **decode-dimms is not available on Bazzite.** Fedora puts `decode-*` in the i2c-tools-perl subpackage (https://src.fedoraproject.org/rpms/i2c-tools/raw/rawhide/f/i2c-tools.spec L143-148), which isn't installed. decode-dimms looks under `/sys/bus/i2c/drivers/{eeprom,at24,ee1004}` and reads `<dev>/eeprom` (decode-dimms v4.4 L2450, L2613-2657). With `-x` it accepts `hexdump -C` files (L2544). Options, cleanest first:
-  - **(a) Run the upstream script with the system perl, as your normal user (no layering):**
+  - **(a) Run the upstream script with the system perl, as a normal user (no layering):**
     ```
     curl -fLo ~/spd/decode-dimms 'https://git.kernel.org/pub/scm/utils/i2c-tools/i2c-tools.git/plain/eeprom/decode-dimms?h=v4.4'
-    sha256sum ~/spd/decode-dimms   # 691efbbf06b8a66c8b0b6a6811e36ac7cb17cda8b14a51d42a51b7022f6830e5 on 2026-10-24
+    sha256sum ~/spd/decode-dimms   # 691efbbf06b8a66c8b0b6a6811e36ac7cb17cda8b14a51d42a51b7022f6830e5 (i2c-tools v4.4)
     perl ~/spd/decode-dimms --side-by-side
     perl ~/spd/decode-dimms -x ~/spd/spd-*.hex
     ```
@@ -116,7 +116,7 @@ grep -n -i 'SystemIO' *.dsl | grep -iE '0x0B[0-9A-F]{2}|SMB'
   - Memory Technology, Operating Mode Capability, Firmware Version, Module Manufacturer ID, Module Product ID, Subsystem Controller IDs (≥ 0x34)
   - Non-Volatile / Volatile / Cache / Logical Size (≥ 0x3C / 0x44 / 0x4C / 0x54)
   - Extended speeds (≥ 0x5C), PMIC/RCD (≥ 0x64)
-- **What this board reports** (from the udev capture of the same table):
+- **What a B550 AORUS PRO reports** (example, from udev's capture of the same table):
 
 | Field | Value |
 |---|---|
@@ -127,12 +127,12 @@ grep -n -i 'SystemIO' *.dsl | grep -iE '0x0B[0-9A-F]{2}|SMB'
 | Manufacturer (string) | "Unknown" |
 | Module Manufacturer ID | Bank 6, Hex 0x02 |
 | Part Number | "4400 C19 Series" |
-| Serial Numbers | 101206FF, 00000000, 101206F0, 00000000 |
+| Serial Numbers | per-module values; two of the four read 00000000 |
 | Memory Technology | DRAM |
 | Volatile Size | 8 GiB, so the record is at least 0x44 bytes long |
 
 - **Caveats:**
-  - **Voltage:** udev's "1" is a formatting artefact. systemd v259 prints whole-100 mV values with `%.1g` (`src/udev/dmi_memory_id/dmi_memory_id.c` L226-235), so 1.0 to 1.4 V all show as "1". dmidecode prints `%.1f V` (dmidecode.c L2864-2871). The real value is unknown until you run dmidecode. Whether this AMI BIOS fills Configured Voltage with your BIOS DRAM voltage setting or a nominal value is also unknown.
+  - **Voltage:** udev's "1" is a formatting artefact. systemd v259 prints whole-100 mV values with `%.1g` (`src/udev/dmi_memory_id/dmi_memory_id.c` L226-235), so 1.0 to 1.4 V all show as "1". dmidecode prints `%.1f V` (dmidecode.c L2864-2871). The real value is unknown until you run dmidecode. Whether this AMI BIOS fills Configured Voltage with the BIOS DRAM voltage setting or a nominal value is also unknown.
   - **Speed:** the BIOS puts the running speed in "Speed" as well, so DMI does not show the kit's rated/XMP speed. The SPD does.
   - **Manufacturer:** Bank 6/0x02 decodes to Patriot Memory (decode-dimms v4.4 L212 and L527-539; bank = continuation count + 1 per `dmi_memory_id.c` L401-403).
   - **Part number:** in DDR4 SPD the part number is bytes 329-348 (decode-dimms L2274). Whether the BIOS copies it verbatim is not verified.
@@ -148,7 +148,7 @@ grep -n -i 'SystemIO' *.dsl | grep -iE '0x0B[0-9A-F]{2}|SMB'
 - Write-protect commands live at 0x30-0x37: SWP0=0x31, SWP1=0x34, SWP2=0x35, SWP3=0x30, CWP=0x33. All of them need a high voltage (VHV) on the SA0 pin (Table 2; §5.1.1: "To issue the SWP(n) and CWP instructions, the signal applied on SA0 must be driven to VHV").
 - 0x36/0x37 select page 0/1. The selection is not stored and resets to page 0 on power-on reset (§3.8.3). A read at 0x36 reports the current page (§3.8.4).
 
-So from the host, a motherboard cannot set or clear DDR4 write protection. The real risk is writes to 0x50-0x57, which can overwrite SPD blocks that aren't protected. Whether your Patriot modules' blocks are protected is unknown.
+So from the host, a motherboard cannot set or clear DDR4 write protection. The real risk is writes to 0x50-0x57, which can overwrite SPD blocks that aren't protected. Whether a given module's blocks are protected is unknown until checked.
 
 **The ee1004 driver's only write** is a one-byte page-select command to 0x36/0x37 (ee1004.c L108). Everything else is a read, and the sysfs file has no write path. One caveat: after a full 512-byte read the bus is left on page 1. I found no documented harm from that, but the `head -c 1` line above puts it back on page 0 for free.
 
@@ -168,5 +168,3 @@ So from the host, a motherboard cannot set or clear DDR4 write protection. The r
 - OpenRGB / liquidctl / coolercontrol SMBus scans while you capture
 - The `at24` or `eeprom` drivers on DDR4 (decode-dimms L2812-2813 says to use ee1004)
 - While running with `lax`, unloading gigabyte_wmi (`sudo modprobe -r gigabyte_wmi`) lowers the chance of firmware code using the SMBus at the same time. Whether that driver's firmware path touches the SMBus at all is unknown.
-
-The kernel, ACPI, nvmem, i2c-tools, dmidecode and systemd sources I quoted are saved under `/tmp/spdresearch/{src,web,dmi,st}`. Nothing was written to your scratch directory.
