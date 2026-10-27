@@ -226,6 +226,9 @@ def is_valid(q, v):
 
 
 AUTO_RX = re.compile(r"\bauto\b", re.I)
+# Gigabyte's LLC questions are numerics holding a list code. An untouched one holds the all-ones sentinel (F16b); on
+# F19c both read 0 while the BIOS menu shows "Auto" (the user checked on 2026-10-27), so code 0 is Auto too.
+GBT_AUTO_ZERO = {"CPU Vcore Loadline Calibration", "Vcore SOC Loadline Calibration"}
 
 
 def auto_state(q, v, txt, dflt):
@@ -237,6 +240,8 @@ def auto_state(q, v, txt, dflt):
     w = q.get("width") or 0
     if q["op"] == "NUMERIC" and w and v == (1 << (8 * w)) - 1:
         return "Auto (all-ones sentinel)"
+    if q["op"] == "NUMERIC" and v == 0 and clean(q.get("prompt") or "") in GBT_AUTO_ZERO:
+        return "Auto (code 0)"
     if dflt is not None and v == dflt:
         return "default"
     if dflt is None:

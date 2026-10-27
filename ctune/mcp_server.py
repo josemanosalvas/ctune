@@ -29,7 +29,7 @@ INSTRUCTIONS = (
 )
 
 
-def _run(kind, fn, detach, **kw):
+def _run(kind, fn, detach, /, **kw):
     """Long tests run detached (poll test_status); short ones can run inline."""
     return runner.start(kind, **kw) if detach else fn(**kw)
 
@@ -96,20 +96,27 @@ TOOLS = {
                   lambda a: gpu.apply(a.get("core_offset"), a.get("mem_offset"), a.get("max_clock"), a.get("power_limit"))),
     "gpu_reset": ("Reset GPU tuning: offsets 0, clocks unlocked, default power limit (root, password prompt).",
                   _obj(), lambda a: gpu.reset()),
-    "gpu_test": ("GPU stability test with 1 Hz telemetry, recorded in the journal. kind: core runs gpu-burn (cuBLAS "
+    "gpu_test": ("GPU stability test with 1 Hz telemetry, recorded in the journal. kind core runs gpu-burn (cuBLAS "
                  "matrix products whose results are compared, so silent compute errors count): FP32 for burn_seconds "
-                 "(default 600), then FP64 for fp64_seconds (default 300, at least 90; low power, expected to sit at the lock) "
-                 "and tensor cores for tc_seconds (default 0). vram runs memtest_vulkan; screen runs both (about 21 "
-                 "min, detached by default; poll test_status); vkpeak gives the old throughput score only. Stops at "
-                 "83 °C. Returns verdict green/red, Gflop/s, at_lock_share, power, efficiency and new Xid errors.",
-                 _obj({"kind": {"type": "string", "enum": ["core", "vram", "screen", "vkpeak"]},
+                 "(default 600; sits at the power cap, the score), FP64 for fp64_seconds (default 600; sits at the "
+                 "lock below the cap: compare heat and fan here), tensor cores for tc_seconds (default 120), then FP32 "
+                 "frozen 1 s in every 10 for transient_seconds (default 180), so the load keeps stepping between idle "
+                 "and full at the top clock. graphics runs Quake II RTX headless for graphics_seconds (default 300): "
+                 "RT cores and the lock at high power, but nothing it renders is checked, so it is red only on a "
+                 "crash, a lost device, a hang or an Xid. vram runs memtest_vulkan. screen runs core, graphics and "
+                 "vram (about 36 min, detached by default; poll test_status). vkpeak gives the old throughput score "
+                 "only. 0 seconds skips a part. Stops at 83 °C. Returns verdict green/red/inconclusive, Gflop/s, "
+                 "clock_stretch (GFLOPS per MHz against the last green result at the same lock), and per part "
+                 "at_lock_share, power, temperature and fan (avg, max, and *_end over the last 60 s), plus new Xid "
+                 "errors.",
+                 _obj({"kind": {"type": "string", "enum": list(gpu.KINDS)},
                        "burn_seconds": {"type": "integer"}, "fp64_seconds": {"type": "integer"},
-                       "tc_seconds": {"type": "integer"}, "vram_seconds": {"type": "integer"},
+                       "tc_seconds": {"type": "integer"}, "transient_seconds": {"type": "integer"},
+                       "graphics_seconds": {"type": "integer"}, "vram_seconds": {"type": "integer"},
                        "core_runs": {"type": "integer"}, "detach": {"type": "boolean"}, "note": S}),
-                 lambda a: _run("gpu_test", gpu.test, a.get("detach", True), kind=a.get("kind", "screen"),
-                                burn_seconds=a.get("burn_seconds", 600), fp64_seconds=a.get("fp64_seconds", 300),
-                                tc_seconds=a.get("tc_seconds", 0), vram_seconds=a.get("vram_seconds", 300),
-                                core_runs=a.get("core_runs", 3), note=a.get("note", ""))),
+                 # the defaults live in gpu.test only
+                 lambda a: _run("gpu_test", gpu.test, a.get("detach", True),
+                                **{k: v for k, v in a.items() if k != "detach"})),
     "gpu_persist": ("Re-apply the GPU settings applied now at every boot and after resume (root, password prompt). "
                     "Refused unless the latest sign-off with exactly these settings, on this GPU and driver, was green. "
                     "A root-owned boot unit applies them with nvidia_oc; it skips them after a driver update or two "
@@ -157,7 +164,8 @@ TOOLS = {
                                 note=a.get("note", ""))),
     # suite
     "signoff": ("Multi-hour sign-off that ends a campaign, against every domain's current settings: ram (60 min), "
-                "ycruncher (45), cpu per-core cycle (about 50), gpu (75), combined RAM + GPU + NVMe load (30), idle "
+                "ycruncher (45), cpu per-core cycle (about 50), gpu (90, including Quake II RTX), combined RAM + GPU + "
+                "NVMe load (30), idle "
                 "(30). cpu_heavy (25) runs mprime AVX2 per core after the SSE cpu phase. Stops at the first red phase unless keep_going. Always runs detached: poll test_status; the "
                 "result lands in the journal. minutes overrides per phase, e.g. {\"ram\": 120}.",
                 _obj({"phases": {"type": "array", "items": {"type": "string", "enum": list(signoff.PHASES)}},
