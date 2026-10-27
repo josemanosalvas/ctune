@@ -2,6 +2,8 @@
 """Snapshot the live DDR4 / Infinity Fabric configuration of a Zen3 AM4 system (ZenTimings-style).
 
 Run as root:  python3 -I ram_snapshot.py [--out DIR] [--label TEXT] [--owner UID:GID]
+or as the user once `ctune passwordless` has installed collect_root.py: the reads that need root go through that
+root-owned collector with no password prompt, and this script writes the snapshot as the user.
 Writes DIR/<timestamp>_<bios>/{snapshot.json,snapshot.md,raw/*}. Compare two snapshots with ram_compare.py.
 
 Read-only. Sources:
@@ -10,11 +12,13 @@ Read-only. Sources:
   * SMU pm_table (FCLK/UCLK/MCLK, VSOC, VDDP, VDDG, PPT/TDC/EDC) - ZenStates-Core PowerTable.cs offsets.
   * SVI2 SoC telemetry (SMN 0x5A00C), dmidecode type 0/2/16/17, hwmon, AOD/APOB (only if /dev/mem allows).
 """
-import argparse, glob, importlib.util, json, os, re, statistics, struct, subprocess, sys, time
+import argparse, base64, glob, importlib.util, json, os, re, statistics, struct, subprocess, sys, time
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 SMN = "/sys/kernel/ryzen_smu_drv/smn"
 SMU = "/sys/kernel/ryzen_smu_drv"
+COLLECTOR = "/usr/local/libexec/ctune/mem/zen3_am4/collect_root.py"   # `ctune passwordless`
+DMIDECODE = "/usr/bin/dmidecode"
 
 spec = importlib.util.spec_from_file_location("zdec", os.path.join(HERE, "zen3_ddr4_decode.py"))
 zdec = importlib.util.module_from_spec(spec)
@@ -280,6 +284,45 @@ def render_md(s):
     return "\n".join(L)
 
 
+# ---------------------------------------------------------------- the reads that need root
+def collect_privileged(skip_devmem, dump_root, nvs_dump=True):
+    """Everything a snapshot reads as root: the SMN registers, dmidecode and, unless skipped, /dev/mem (BCLK, the
+    AOD/APOB buffers, the bulk ACPI NVS dumps unless nvs_dump is off, the HII database). The firmware dumps land below
+    dump_root/raw. collect_root.py runs this as the root-owned passwordless collector, without the NVS dumps."""
+    regs, unstable = smn_snapshot()
+    raw = os.path.join(dump_root, "raw")
+    os.makedirs(raw, exist_ok=True)
+    out = {"regs": {hex(k): v for k, v in regs.items()}, "unstable": unstable,
+           "dmidecode": sh([DMIDECODE, "-t", "0", "-t", "2", "-t", "16", "-t", "17"]),
+           "dmidecode_t17_dump": sh([DMIDECODE, "-t", "17", "-u"]),
+           "bclk": {"skipped": True} if skip_devmem else bclk_mmio(), "aod": "skipped", "fwmem": None}
+    if not skip_devmem:
+        out["aod"] = sh([sys.executable, "-I", "-B", os.path.join(HERE, "am4_bios_memcfg.py"), "--dump-dir", raw]
+                        + ([] if nvs_dump else ["--no-nvs-dump"]))
+        out["fwmem"] = sh([sys.executable, "-I", "-B", os.path.join(HERE, "dump_fw_mem.py"),
+                           os.path.join(raw, "fwmem")]).strip()
+    return out
+
+
+def collect_passwordless(skip_devmem, d, collector=COLLECTOR, run=subprocess.run):
+    """collect_privileged through the root-owned collector, with no password prompt. Its firmware dumps come back
+    inline and are written below d as the user."""
+    r = run(["pkexec", collector] + (["--skip-devmem"] if skip_devmem else []), capture_output=True, text=True,
+            timeout=900)
+    if r.returncode:
+        raise RuntimeError(f"collector failed ({r.returncode}): {r.stderr.strip()[-600:]}")
+    out = json.loads(r.stdout)
+    root = os.path.realpath(d)
+    for rel, b64 in out.pop("files", {}).items():
+        p = os.path.realpath(os.path.join(root, rel))
+        if not p.startswith(root + os.sep):
+            raise ValueError(f"the collector returned a path outside the snapshot: {rel!r}")
+        os.makedirs(os.path.dirname(p), exist_ok=True)
+        with open(p, "wb") as f:
+            f.write(base64.b64decode(b64))
+    return out
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--out", default=os.path.join(os.path.dirname(HERE), "snapshots"))
@@ -287,8 +330,10 @@ def main():
     ap.add_argument("--owner", default="", help="uid:gid to chown the output to (when run via sudo/pkexec)")
     ap.add_argument("--skip-devmem", action="store_true", help="skip /dev/mem reads (BCLK, AOD, APOB)")
     a = ap.parse_args()
-    if os.geteuid() != 0:
-        sys.exit("must run as root (SMN reads need write access to the ryzen_smu smn node)")
+    root = os.geteuid() == 0
+    if not root and not os.path.isfile(COLLECTOR):
+        sys.exit("must run as root (SMN reads need write access to the ryzen_smu smn node), or install the "
+                 "passwordless collector with `ctune passwordless`")
 
     meta = {
         "captured": time.strftime("%Y-%m-%dT%H:%M:%S%z"), "label": a.label,
@@ -301,16 +346,14 @@ def main():
         "cmdline": rd("/proc/cmdline"),
     }
     pm, pm_raw = pm_snapshot()
-    regs, unstable = smn_snapshot()
-    mclk = pm["fields"].get("MCLK_MHz", {}).get("median")
-    decoded = zdec.decode_all(regs, pm_mclk_mhz=mclk)
-    dmi_text = sh(["dmidecode", "-t", "0", "-t", "2", "-t", "16", "-t", "17"])
-    bclk = {"skipped": True} if a.skip_devmem else bclk_mmio()
     tag = f"{time.strftime('%Y%m%d-%H%M%S')}_{meta['bios_version']}"
     d = os.path.join(a.out, tag)
     os.makedirs(os.path.join(d, "raw"), exist_ok=True)
-    aod = "skipped" if a.skip_devmem else sh([sys.executable, "-I", "-B", os.path.join(HERE, "am4_bios_memcfg.py"),
-                                              "--dump-dir", os.path.join(d, "raw")])
+    priv = collect_privileged(a.skip_devmem, d) if root else collect_passwordless(a.skip_devmem, d)
+    regs = {int(k, 16): v for k, v in priv["regs"].items()}
+    unstable, dmi_text, bclk, aod = priv["unstable"], priv["dmidecode"], priv["bclk"], priv["aod"]
+    mclk = pm["fields"].get("MCLK_MHz", {}).get("median")
+    decoded = zdec.decode_all(regs, pm_mclk_mhz=mclk)
     sensors = sh(["sensors", "-j"])
 
     snap = {
@@ -336,7 +379,7 @@ def main():
     with open(os.path.join(d, "raw", "dmidecode.txt"), "w") as f:
         f.write(dmi_text)
     with open(os.path.join(d, "raw", "dmidecode_t17_dump.txt"), "w") as f:
-        f.write(sh(["dmidecode", "-t", "17", "-u"]))
+        f.write(priv["dmidecode_t17_dump"])
     # BIOS setup configuration (EFI variables) + the HII database needed to decode it (bios_settings_decode.py)
     ev = os.path.join(d, "raw", "efivars")
     os.makedirs(ev, exist_ok=True)
@@ -347,13 +390,13 @@ def main():
                     dst.write(src.read())
             except OSError:
                 pass
-    if not a.skip_devmem:
-        print(sh([sys.executable, "-I", "-B", os.path.join(HERE, "dump_fw_mem.py"), os.path.join(d, "raw", "fwmem")]).strip())
+    if priv["fwmem"]:
+        print(priv["fwmem"])
     hiidb = os.path.join(d, "raw", "fwmem", "hiidb.bin")
     if os.path.exists(hiidb):  # decode every BIOS setup question against this BIOS's own forms
         print(sh([sys.executable, "-I", "-B", os.path.join(HERE, "bios_settings_decode.py"), "--hiidb", hiidb,
                   "--efivars", ev, "--live", "", "--out", os.path.join(d, "decoded")]).strip()[-400:])
-    if a.owner:
+    if a.owner and root:
         uid, gid = (int(x) for x in a.owner.split(":"))
         for root, dirs, files in os.walk(a.out):
             for n in [root] + [os.path.join(root, x) for x in files]:

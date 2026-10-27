@@ -19,7 +19,7 @@ You run a **campaign** in one **domain** (mem, gpu or cpu): a chain of single-va
    - mem: the user types the values in the BIOS and reboots. Give them the menu path from `mem_bios_search`.
    - cpu: `cpu_probe` once per boot, then `cpu_apply` for one core.
    - gpu: call `gpu_apply`.
-   A tool whose description says root opens a password prompt. Tell the user before each call. Done when the change is in place, or the user reports a failed boot.
+   A tool whose description says root opens a password prompt; tell the user before each such call. Once `ctune passwordless` is installed, GPU apply and reset, CPU probe, apply and reset, and `mem_snapshot` need none, so campaigns run unattended; only `gpu_persist` and `gpu_unpersist` still prompt. Done when the change is in place, or the user reports a failed boot.
 4. **Verify.**
    - mem: `mem_snapshot`, then `mem_verify` (BIOS configuration against the running hardware) and `mem_compare` against the baseline snapshot. After a BIOS flash, `mem_checklist` on the last pre-flash snapshot lists what to re-enter. If the first new snapshot returns `bios_key_problems`, a key setting changed its menu location: fix `KEY` in `bios_settings_decode.py` before trusting its focused table.
    - cpu: the `cpu_apply` readback equals the planned margin, and `cpu_status` shows it with `co_source` ctune.

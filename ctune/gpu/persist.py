@@ -1,6 +1,6 @@
 """Keep signed-off GPU settings across reboots: a root-owned boot unit re-applies them with nvidia_oc.
 
-Policy (the user's decision, docs/research/reuse-decisions.md section 1): only settings that passed `signoff`
+Policy (docs/research/reuse-decisions.md section 1): only settings that passed `signoff`
 persist. Experiments stay runtime-only and a reboot clears them. persist() refuses unless:
 - ctune applied settings this boot, and NVML reads back the same offsets and power limit;
 - the latest sign-off run with exactly these settings and a full-length gpu phase was green, on this GPU and
@@ -187,6 +187,21 @@ def unpersist(uninstall=False):
     """Stop re-applying at boot. Settings applied now stay until reboot. Root: one password prompt."""
     out = _root(["--clear"] + (["--uninstall"] if uninstall else []))
     journal.add(DATA, "applied", domain="gpu", text="GPU settings no longer persist" + (" (uninstalled)" if uninstall else ""))
+    return out
+
+
+def passwordless(remove=False):
+    """Install (or remove) the passwordless path for every domain: root-owned copies of the GPU runtime helper, the
+    CPU Curve Optimizer helper and the RAM snapshot collector, and a polkit rule for this user (install.py). Root:
+    one last password prompt."""
+    if remove:
+        out = _root(["--passwordless-remove"])
+    else:
+        if not os.path.isfile(BINARY):
+            raise RuntimeError("nvidia_oc is not built: run `ctune gpu persist-setup`")
+        out = _root(["--binary", BINARY, "--passwordless"])
+    journal.add(DATA, "note", text="passwordless root path (GPU, CPU, RAM) " + ("removed" if remove else "installed"),
+                result=out)
     return out
 
 

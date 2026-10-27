@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+#!/usr/bin/python3 -IB
 """Root helper: read or set the per-core Curve Optimizer margin through the SMU. Run through pkexec by ctune.cpu.api.
 
   apply.py --state FILE [--owner UID:GID] --probe [--expect M0,M1,...]   read every core (MP1 0x48), compare
@@ -8,15 +8,42 @@
 Writes are refused unless this boot's probe read back the expected (BIOS) margin on every core, the core still holds
 the value ctune last left there, and the change stays within -30..30 and 5 per step. Margins last until reboot.
 The command IDs and encoding are cited in ctune/cpu/smu.py.
+
+`ctune passwordless` installs this file and smu.py, owned by root, in /usr/local/libexec/ctune/cpu, and a polkit rule
+lets one user run it through pkexec with no password (docs/research/reuse-decisions.md). Any process running as
+that user can then call it, so the installed copy keeps its state in the root-owned /run/ctune (cleared at boot) and
+refuses --state and --owner: a state file the caller could write would let it skip the probe and value checks.
+Calls take an exclusive lock, so two at once cannot lose a margin from the state. The guardrails bind each call: a
+caller that loops can still walk a core across the whole -30..30 range in steps of 5, and that range is the cap.
 """
 import argparse
+import fcntl
+import importlib.machinery
+import importlib.util
 import json
 import os
 import sys
 import time
 
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.realpath(__file__)))))
-from ctune.cpu import smu  # noqa: E402
+HERE = os.path.dirname(os.path.realpath(__file__))
+LIBEXEC_CPU = "/usr/local/libexec/ctune/cpu"
+RUN_STATE = "/run/ctune/cpu-co.json"
+RUN_LOCK = "/run/ctune/cpu-co.lock"
+
+
+def _sibling(name):
+    """smu.py from this file's own directory: the repo, or the root-owned copy. Never from sys.path."""
+    loader = importlib.machinery.SourceFileLoader("ctune_cpu_" + name[:-3], os.path.join(HERE, name))
+    mod = importlib.util.module_from_spec(importlib.util.spec_from_loader(loader.name, loader))
+    loader.exec_module(mod)
+    return mod
+
+
+smu = _sibling("smu.py")
+
+
+def installed():
+    return HERE == os.path.realpath(LIBEXEC_CPU)
 
 
 def _boot_id():
@@ -119,7 +146,7 @@ def reset(mb, state):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--state", required=True)
+    ap.add_argument("--state")
     ap.add_argument("--owner", default="")
     ap.add_argument("--probe", action="store_true")
     ap.add_argument("--expect", help="comma-separated BIOS margins, core 0 first")
@@ -129,6 +156,16 @@ def main():
     a = ap.parse_args()
     if os.geteuid() != 0:
         sys.exit("must run as root")
+    os.umask(0o022)   # pkexec keeps the caller's umask: the state must never be writable by the caller
+    if installed():
+        if a.state or a.owner:
+            return _out(False, [f"the installed helper keeps its state in {RUN_STATE}: no --state or --owner"])
+        a.state = RUN_STATE
+        os.makedirs(os.path.dirname(RUN_LOCK), mode=0o755, exist_ok=True)
+        lock = os.open(RUN_LOCK, os.O_WRONLY | os.O_CREAT | os.O_NOFOLLOW, 0o600)
+        fcntl.flock(lock, fcntl.LOCK_EX)   # held until the process exits
+    elif not a.state:
+        return _out(False, ["--state is required"])
     modes = sum([a.probe, a.reset, a.core is not None or a.margin is not None])
     if modes != 1 or (a.core is None) != (a.margin is None):
         return _out(False, ["give exactly one of --probe, --reset, or --core with --margin"])

@@ -8,6 +8,9 @@
   install.py --clear [--uninstall]              remove /etc/ctune/gpu.json; --uninstall also removes the units and
                                                 /usr/local/libexec/ctune
   install.py --reset-guard                      clear the crash-loop guard, so the next boot applies again
+  install.py --binary NVIDIA_OC --passwordless  install, plus gpu-runtime-apply and a polkit rule that lets the
+                                                pkexec caller run it without a password
+  install.py --passwordless-remove              remove that rule and gpu-runtime-apply
 
 Installing copies nvidia_oc and boot_apply.py into /usr/local/libexec/ctune, owned by root, and writes and enables
 ctune-gpu-persist.service (boot) and ctune-gpu-persist-resume.service (after suspend). The boot path then runs only
@@ -18,6 +21,8 @@ import argparse
 import hashlib
 import json
 import os
+import pwd
+import re
 import shutil
 import stat
 import subprocess
@@ -29,6 +34,22 @@ from ctune.gpu import boot_apply  # noqa: E402
 
 LIBEXEC = "/usr/local/libexec/ctune"
 APPLIER = os.path.join(LIBEXEC, "gpu-boot-apply")
+RUNTIME = os.path.join(LIBEXEC, "gpu-runtime-apply")
+POLKIT_RULE = "/etc/polkit-1/rules.d/49-ctune.rules"
+REPO_CTUNE = os.path.dirname(HERE)
+# the passwordless path for every domain: root-owned copies, (source in the repo, destination, mode). The three
+# programs the polkit rule names run as root; the rest are the modules they load from their own directory.
+CPU_DIR = os.path.join(LIBEXEC, "cpu")
+MEM_DIR = os.path.join(LIBEXEC, "mem", "zen3_am4")
+MEM_SRC = os.path.join(REPO_CTUNE, "mem", "platforms", "zen3_am4")
+PROGRAMS = [RUNTIME, os.path.join(CPU_DIR, "apply.py"), os.path.join(MEM_DIR, "collect_root.py")]
+PASSWORDLESS_FILES = [
+    (os.path.join(HERE, "runtime_apply.py"), RUNTIME, 0o755),
+    (os.path.join(REPO_CTUNE, "cpu", "apply.py"), os.path.join(CPU_DIR, "apply.py"), 0o755),
+    (os.path.join(REPO_CTUNE, "cpu", "smu.py"), os.path.join(CPU_DIR, "smu.py"), 0o644),
+    (os.path.join(MEM_SRC, "collect_root.py"), os.path.join(MEM_DIR, "collect_root.py"), 0o755),
+] + [(os.path.join(MEM_SRC, n), os.path.join(MEM_DIR, n), 0o644)
+     for n in ("ram_snapshot.py", "zen3_ddr4_decode.py", "am4_bios_memcfg.py", "dump_fw_mem.py")]
 NVIDIA_OC = os.path.join(LIBEXEC, "nvidia_oc")
 CONFIG = "/etc/ctune/gpu.json"
 STATE_DIR = "/var/lib/ctune"
@@ -93,14 +114,21 @@ def check_root_owned(path):
 
 
 def put(src_or_text, dst, mode, text=False):
+    """Write dst as root with mode. The temp file is created exclusively, 0600 and without following a link, so a
+    user cannot open it for writing between its creation and the rename (pkexec keeps the caller's umask)."""
     os.makedirs(os.path.dirname(dst), mode=0o755, exist_ok=True)
     check_root_owned(dst)
     tmp = dst + ".ctune-tmp"
+    if os.path.lexists(tmp):
+        os.remove(tmp)
     if text:
-        with open(tmp, "w") as f:
-            f.write(src_or_text)
+        data = src_or_text.encode()
     else:
-        shutil.copyfile(src_or_text, tmp)
+        with open(src_or_text, "rb") as f:
+            data = f.read()
+    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
+    with os.fdopen(fd, "wb") as f:
+        f.write(data)
     os.chown(tmp, 0, 0)
     os.chmod(tmp, mode)
     os.replace(tmp, dst)
@@ -123,6 +151,57 @@ def install(binary):
     return {"installed": {NVIDIA_OC: sha256(NVIDIA_OC), APPLIER: sha256(APPLIER)}, "steps": steps}
 
 
+def polkit_rule(user, programs=None):
+    """One user may run exactly ctune's root-owned helpers, as root, through pkexec without a password. pkexec hands
+    polkit the resolved path (/usr/local is a link to /var/usrlocal on Fedora Atomic), so the rule names those."""
+    if not re.fullmatch(r"[a-z_][a-z0-9_-]{0,31}", user):
+        raise ValueError(f"unexpected user name {user!r}")
+    programs = programs or [os.path.realpath(p) for p in PROGRAMS]
+    if not all(re.fullmatch(r"/[A-Za-z0-9_./-]+", p) for p in programs):
+        raise ValueError(f"unexpected program path in {programs!r}")
+    listed = ", ".join(f'"{p}"' for p in programs)
+    return f"""// ctune (ctune/gpu/install.py): {user} may run these root-owned helpers as root through pkexec without a
+// password. They take numbers only and keep ctune's caps (GPU, CPU Curve Optimizer) or only read (RAM snapshot).
+// Remove with `ctune passwordless --remove`.
+polkit.addRule(function(action, subject) {{
+    var programs = [{listed}];
+    if (action.id == "org.freedesktop.policykit.exec" &&
+        programs.indexOf(action.lookup("program")) >= 0 &&
+        action.lookup("user") == "root" &&
+        subject.user == "{user}") {{
+        return polkit.Result.YES;
+    }}
+}});
+"""
+
+
+def passwordless(binary):
+    """install() plus the runtime helper and the polkit rule, for the user who ran pkexec."""
+    uid = os.environ.get("PKEXEC_UID")
+    if not uid:
+        raise RuntimeError("run through pkexec: the rule is for the user who called it (PKEXEC_UID)")
+    user = pwd.getpwuid(int(uid)).pw_name
+    out = install(binary)
+    for src, dst, mode in PASSWORDLESS_FILES:
+        put(src, dst, mode)
+        out["installed"][dst] = sha256(dst)
+    put(polkit_rule(user), POLKIT_RULE, 0o644, text=True)
+    out["polkit_rule"] = {"path": POLKIT_RULE, "user": user, "programs": [os.path.realpath(p) for p in PROGRAMS]}
+    return out
+
+
+def remove_passwordless():
+    """The rule first, so nothing stays allowed while the files go."""
+    removed = [p for p in (POLKIT_RULE, "/etc/polkit-1/rules.d/49-ctune-gpu.rules", RUNTIME) if os.path.exists(p)]
+    for p in removed:
+        os.remove(p)
+    for d in (CPU_DIR, os.path.join(LIBEXEC, "mem")):
+        if os.path.isdir(d):
+            shutil.rmtree(d)
+            removed.append(d)
+    return removed
+
+
 def run_applier(*args):
     r = subprocess.run([sys.executable, "-I", "-B", APPLIER, *args], capture_output=True, text=True, timeout=180)
     try:
@@ -139,10 +218,13 @@ def main():
     g.add_argument("--selftest")
     g.add_argument("--clear", action="store_true")
     g.add_argument("--reset-guard", action="store_true")
+    g.add_argument("--passwordless", action="store_true")
+    g.add_argument("--passwordless-remove", action="store_true")
     ap.add_argument("--uninstall", action="store_true")
     a = ap.parse_args()
     if os.geteuid() != 0:
         sys.exit("must run as root")
+    os.umask(0o022)   # pkexec keeps the caller's umask; never create anything group- or world-writable
     out = {"ok": True}
     attempts = os.path.join(STATE_DIR, "gpu-boot-attempts")
     if a.reset_guard:
@@ -151,11 +233,16 @@ def main():
             os.remove(attempts)
         print(json.dumps(out))
         return 0
+    if a.passwordless_remove:
+        out["removed"] = remove_passwordless()
+        print(json.dumps(out))
+        return 0
     if a.clear:
         removed = [p for p in (CONFIG, attempts) if os.path.exists(p)]
         for p in removed:
             os.remove(p)
         if a.uninstall:
+            removed += remove_passwordless()
             out["steps"] = [systemctl("disable", BOOT_UNIT, RESUME_UNIT)]
             for name in UNIT_TEXT:
                 p = os.path.join(UNITS, name)
@@ -172,6 +259,10 @@ def main():
     if not a.binary or not os.path.isfile(a.binary):
         print(json.dumps({"ok": False, "errors": [f"nvidia_oc binary not found: {a.binary}"]}))
         return 2
+    if a.passwordless:
+        out.update(passwordless(a.binary))
+        print(json.dumps(out))
+        return 0
     try:
         with open(a.config or a.selftest) as f:
             cfg = json.load(f)

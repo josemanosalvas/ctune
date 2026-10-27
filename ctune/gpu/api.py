@@ -14,6 +14,7 @@ from ctune.gpu import burn, nvml, q2rtx
 
 STATE = os.path.join(DATA, "gpu_state.json")
 HELPER = os.path.join(os.path.dirname(os.path.abspath(__file__)), "apply.py")
+RUNTIME = "/usr/local/libexec/ctune/gpu-runtime-apply"   # `ctune gpu passwordless`: no password prompt
 MEMTEST = os.path.join(TOOLS, "memtest_vulkan", "memtest_vulkan")
 VKPEAK = os.path.join(TOOLS, "vkpeak", "vkpeak-20260527-linux", "vkpeak")
 
@@ -73,7 +74,29 @@ def _persist_status():
         return {"error": f"{type(e).__name__}: {e}"}
 
 
+def _merge_state(plan, reset):
+    """Record what is applied since boot (NVML cannot read back a clock lock). The passwordless helper writes no
+    file, so the caller keeps this state."""
+    with open("/proc/sys/kernel/random/boot_id") as f:
+        boot = f.read().strip()
+    try:
+        with open(STATE) as f:
+            state = json.load(f)
+        if state.get("boot_id") != boot:
+            state = {}
+    except (OSError, ValueError):
+        state = {}
+    state = dict(plan) if reset else {**state, **{k: v for k, v in plan.items() if v is not None}}
+    state.update(boot_id=boot, ts=time.strftime("%Y-%m-%dT%H:%M:%S%z"))
+    os.makedirs(os.path.dirname(STATE), exist_ok=True)
+    with open(STATE, "w") as f:
+        json.dump(state, f, indent=1)
+    return state
+
+
 def _helper(args):
+    if os.geteuid() != 0 and os.path.isfile(RUNTIME):
+        return _runtime(args)
     cmd = [sys.executable, "-I", "-B", HELPER, "--state", STATE, "--owner", f"{os.getuid()}:{os.getgid()}"] + args
     if os.geteuid() != 0:
         cmd = ["pkexec"] + cmd
@@ -89,6 +112,29 @@ def _helper(args):
         raise RuntimeError(f"helper failed ({r.returncode}): {r.stderr.strip()[-600:]}")
     if not out.get("ok"):
         raise ValueError("; ".join(out.get("errors", [])))
+    return out
+
+
+def _runtime(args):
+    """The root-owned passwordless helper. It refuses values outside ctune's caps and goes back to stock on a
+    failed apply; either way ctune's state follows what it reports."""
+    try:
+        r = subprocess.run(["pkexec", RUNTIME, *args], capture_output=True, text=True, timeout=600)
+    except subprocess.TimeoutExpired:
+        raise RuntimeError("the root password prompt was not answered within 10 minutes; nothing was changed "
+                           "(is the polkit rule installed? `ctune gpu passwordless`)")
+    if r.returncode in (126, 127):
+        raise RuntimeError("pkexec refused or the prompt was dismissed; nothing was changed")
+    try:
+        out = json.loads(r.stdout.strip().splitlines()[-1])
+    except (ValueError, IndexError):
+        raise RuntimeError(f"gpu-runtime-apply failed ({r.returncode}): {r.stderr.strip()[-600:]}")
+    if out.get("rolled_back"):
+        _merge_state({"core_offset": 0, "mem_offset": 0, "max_clock": None,
+                      "power_limit": (out.get("readback") or {}).get("power_limit")}, reset=True)
+    if not out.get("ok"):
+        raise ValueError("; ".join(out.get("errors", [])))
+    out["applied"] = _merge_state(out["applied"], reset=out.get("reset", False))
     return out
 
 

@@ -227,7 +227,7 @@ def is_valid(q, v):
 
 AUTO_RX = re.compile(r"\bauto\b", re.I)
 # Gigabyte's LLC questions are numerics holding a list code. An untouched one holds the all-ones sentinel (F16b); on
-# F19c both read 0 while the BIOS menu shows "Auto" (the user checked on 2026-10-27), so code 0 is Auto too.
+# F19c both read 0 while the BIOS menu shows "Auto", so code 0 is Auto too.
 GBT_AUTO_ZERO = {"CPU Vcore Loadline Calibration", "Vcore SOC Loadline Calibration"}
 
 
