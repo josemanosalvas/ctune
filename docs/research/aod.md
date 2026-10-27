@@ -1,67 +1,67 @@
 # How ZenTimings reads the AM4 DDR4 "BIOS" memory parameters, and how to do it on Linux
 
-This research was done without root: the ACPI table files and `/dev/mem` both need it. The AML evidence comes from public dumps of a sibling board and a Zen3 laptop; the B550 AORUS PRO's identity, kernel restrictions and memory map were read without root. ctune's implementation is `ctune/mem/platforms/zen3_am4/am4_bios_memcfg.py`.
+This research had no root access, which both the ACPI table files and `/dev/mem` need. The AML evidence comes from public dumps of a sibling board and a Zen3 laptop. The B550 AORUS PRO's identity, kernel restrictions and memory map come from files that need no root. ctune's implementation is `ctune/mem/platforms/zen3_am4/am4_bios_memcfg.py`.
 
 ## 1. How ZenTimings gets each value (ZenTimings `7532394`, ZenStates-Core `869b7e8`)
 
 **DDR4 setup.** `WPF/MainWindow.xaml.cs` L241-249 creates `BiosMemController` only for DDR4/LPDDR4. `ReadDDR4MemoryConfig` (L871-944) then fills it:
-1. It calls the `AMD_ACPI` WMI class in `root\wmi`. `AOD.GetWmiFunctions` (`Hardware/Aod/Aod.cs` L529-620) runs `GetObjectID` and `GetObjectID2` to get the command name→ID list.
-2. It runs `WMI.RunCommand(cmd.ID)` for "Get APCB Config" (ID `0x00010001`, comment at L921). `Hardware/WMI.cs` L205-234 sends `Inbuf[8]` = cmdID (u32 LE) + arg, and returns `Outbuf.Result`.
-3. It then runs "Get memory voltages" and copies the non-zero bytes 27..30 (VDDIO, VTT) over the first buffer (L922-935).
-4. If "Get APCB Config" is missing, it uses `cpu.info.aod.Table.RawAodTable` instead, i.e. the raw AOD memory region (L910-917).
+1. It calls the `AMD_ACPI` WMI class in `root\wmi`. `AOD.GetWmiFunctions` (`Hardware/Aod/Aod.cs` L529-620) runs `GetObjectID` and `GetObjectID2` to get the list of command names and their IDs.
+2. It runs `WMI.RunCommand(cmd.ID)` for "Get APCB Config" (ID `0x00010001`, comment at L921). `Hardware/WMI.cs` L205-234 sends `Inbuf[8]`, which holds the command ID as a little-endian u32 followed by the argument, and returns `Outbuf.Result`.
+3. It then runs "Get memory voltages" and copies the non-zero bytes 27 to 30 (VDDIO and VTT) over the first buffer (L922-935).
+4. If "Get APCB Config" is missing, it uses `cpu.info.aod.Table.RawAodTable` instead, which is the raw AOD memory region (L910-917).
 
 **Which source wins.** `ApplyDdr4MemoryConfig` (L762-863):
-- ProcODT, RTT, setup times and drive strengths come from the **APOB** (`apob.MemGeneralConfig`, first populated channel, L750-754 and L810-828) when it has them. The WMI/BMC buffer is only the fallback (L830-862).
-- VDIMM and VTT always come from the BMC buffer (mV / 1000, L770 and L799). Fallbacks are ASUS WMI, then SuperIO.
+- ProcODT, RTT, setup times and drive strengths come from the **APOB** (`apob.MemGeneralConfig`, first populated channel, L750-754 and L810-828) when it has them. The WMI (BMC) buffer is only the fallback (L830-862).
+- VDIMM and VTT always come from the BMC buffer, in mV divided by 1000 (L770 and L799). The fallbacks are ASUS WMI, then SuperIO.
 
-**VDDP / VDDG / VSOC.** These come from the PM table (`WPF/Controls/DDR4TimingsPanel.xaml` L96-98). For `0x380905`, `Hardware/PowerTable.cs` L300 gives VDDCR_SOC `0xB4`, CLDO_VDDP `0x224`, VDDG_IOD `0x228`, VDDG_CCD `0x22C`. An example pm_table dump from a 5800X3D reads 1.1129 / 0.8973 / 0.9976 / 0.9976 V, so these already work on Linux through `ryzen_smu`.
+**VDDP / VDDG / VSOC.** These come from the PM table (`WPF/Controls/DDR4TimingsPanel.xaml` L96-98). For `0x380905`, `Hardware/PowerTable.cs` L300 gives VDDCR_SOC `0xB4`, CLDO_VDDP `0x224`, VDDG_IOD `0x228`, VDDG_CCD `0x22C`. An example pm_table dump from a 5800X3D reads 1.1129, 0.8973, 0.9976 and 0.9976 V at those offsets, so Linux can already read these values through `ryzen_smu`.
 
-**VPP.** It is in the struct (offset 31) and in snapshot exports, but there is no VPP row in the DDR4 panel.
+**VPP.** VPP is in the struct (offset 31) and in snapshot exports, but the DDR4 panel has no VPP row.
 
-**Correction on the SMU path.** `BiosMemController` never uses `GetDramBaseAddress` or `TransferTableToDram`. Those are PM-table-only:
-- ZenStates-Core: Vermeer uses `Zen3Settings` (`Hardware/SMU.cs` L298), which inherits from `Zen2Settings`. `Zen2Settings.cs` L38-40 sets RSMU GetDramBaseAddress = `0x6`, GetTableVersion = `0x8`, TransferTableToDram = `0x5`. `GetDramAddress.cs` L39-48 sends args {1,1}.
+**Correction on the SMU path.** `BiosMemController` never uses `GetDramBaseAddress` or `TransferTableToDram`. Only the PM-table code uses them:
+- ZenStates-Core: Vermeer uses `Zen3Settings` (`Hardware/SMU.cs` L298), which inherits from `Zen2Settings`. `Zen2Settings.cs` L38-40 sets RSMU GetDramBaseAddress = `0x6`, GetTableVersion = `0x8`, TransferTableToDram = `0x5`. `GetDramAddress.cs` L39-48 sends the arguments {1,1}.
 - `ryzen_smu` uses the same messages: `smu.c` L665-688, L773-801, L875-911.
 
 **ZenStates-Core `AOD.cs` (the AM5-oriented path).**
 - It reads SSDTs from the Windows registry `HKLM\HARDWARE\ACPI` (L102-147); the RSDT walk is commented out (L58-100).
-- It finds the region by NameSeg `"AODE"`, then `"AODT"` (L149-158). It parses a fixed 16-byte OperationRegion: name, space, `0x0C`+u32 base, `0x0B`+u16 length (`ACPI.cs` L165-179, `Aod.cs` L207-236).
+- It finds the region by NameSeg `"AODE"`, then `"AODT"` (L149-158). It parses a fixed 16-byte OperationRegion: the name, the space, `0x0C` followed by a u32 base, and `0x0B` followed by a u16 length (`ACPI.cs` L165-179, `Aod.cs` L207-236).
 - It reads physical memory at `base` for `length`.
-- Its `AodData` dictionaries are DDR5 layouts at offsets ≥8916. Vermeer falls to `AodDataDictionaryV1` (L466-467), but those offsets lie past a 0x220C-byte AM4 buffer and are skipped (`AodData.cs` L178). So only `RawAodTable` matters on AM4.
+- Its `AodData` dictionaries are DDR5 layouts at offsets of 8916 and above. Vermeer falls back to `AodDataDictionaryV1` (L466-467), but those offsets lie past the end of a 0x220C-byte AM4 buffer, so the code skips them (`AodData.cs` L178). Only `RawAodTable` matters on AM4.
 
 ## 2. The AOD SSDT / WMI mechanism
 
-**On a B550 AORUS PRO (rev 1.0, read without root):**
-- `/sys/bus/acpi/devices/PNP0C14:01/path` = `\AOD_`, `_UID` "AOD".
-- It exposes WMI GUID `ABBC0F6A-8EA1-11D1-00A0-C90629100000` (object "AA", so method `\AOD_.WMAA`), with no driver bound, plus a BMOF `05901221-…-5` (object "BA").
+**On a B550 AORUS PRO (rev 1.0), read without root:**
+- `/sys/bus/acpi/devices/PNP0C14:01/path` is `\AOD_`, and its `_UID` is "AOD".
+- It exposes WMI GUID `ABBC0F6A-8EA1-11D1-00A0-C90629100000` (object "AA", so method `\AOD_.WMAA`) with no driver bound, and a BMOF `05901221-D566-11D1-B2F0-00A0C9062910-5` (object "BA").
 - That GUID is the `AMD_ACPI` class GUID listed at https://wutils.com/wmi/root/wmi/amd_acpi/.
 
-**Signature.** The table is an `SSDT` with OEMID `AMD`, OEM table ID `"AMD AOD"`. ZenStates-Core also knows `"AOD     "` and `"CB-01   "` (`ACPI.cs` L16-18). `AOD_` is the ACPI device name, not a table signature. On Gigabyte B550 the region is named **AODT**.
+**Signature.** The table is an `SSDT` with OEMID `AMD`, OEM table ID `"AMD AOD"`. ZenStates-Core also knows `"AOD     "` and `"CB-01   "` (`ACPI.cs` L16-18). `AOD_` is the ACPI device name, not a table signature. On Gigabyte B550 boards the region is named AODT.
 
 **AML evidence** (sibling board B550 AORUS PRO V2, linuxhw/ACPI `43a4745`, file `Desktop/Gigabyte Technology/B550/B550 AORUS PRO V2/25E5EF251D0E`):
 - L26: table #16 is SSDT "AMD AOD", 0x3D74 bytes.
 - L23605: `OperationRegion (AODT, SystemMemory, 0xBAC80018, 0x220C)`. The address is a boot-time physical address (irusanov confirms this in https://github.com/irusanov/ZenTimings/issues/18).
 - L21570: SW-SMI port `OperationRegion (PSMI, SystemIO, 0xB2, 2)`.
-- L24784-24830: `_WDG` holds the same ABBC0F6A GUID. `WMAA` dispatches method IDs 1–8 to AM01..AM08: 3 = `OBID` (GetObjectID), 5 = AM05 (RunCommand), 7 = AM07 (SPD), 8 = `OBIE` (GetObjectID2).
+- L24784-24830: `_WDG` holds the same ABBC0F6A GUID. `WMAA` dispatches method IDs 1 to 8 to AM01 through AM08. Method 3 is `OBID` (GetObjectID), 5 is AM05 (RunCommand), 7 is AM07 (SPD) and 8 is `OBIE` (GetObjectID2).
 - L21714: the OBID list includes 0x00010001 "Get APCB Config" and 0x00010002 "Get memory voltages".
 - L23715-23727:
   - `R101` (Get APCB Config): `MBVS=5`, `MBCB=0x80000000`, `ASMI(0x9D)` (SW SMI).
   - `R102` (Get memory voltages): `MBCB=0x40000000`, SMI `0x9E`.
 - L23028-23555: AM05 then copies the AODT fields one-to-one into a 200-byte `OBUF` and returns it.
-- **So the "Get APCB Config" WMI result is a byte copy of the start of the AODT NVS buffer.**
+- **The "Get APCB Config" WMI result is therefore a byte copy of the start of the AODT NVS buffer.**
 - The same layout and logic appear in a Zen3 Cezanne AOD SSDT: hhd-dev/hwinfo `cb716b4`, `devices/Legion_5_15ACH6H/decoded/ssdt3.dsl` L1868, L1974.
 
-**Locating it on Linux:** it is one of `/sys/firmware/acpi/tables/SSDT*`. These files are mode 0400, so root is needed. On a B550 AORUS PRO it is almost certainly `SSDT3` by size: 15740 bytes, against 15732 on the PRO V2, and its SSDT6/8/9 sizes match that dump's ArticDGP/ArticC/AmdTable exactly. That is an inference, not a check. The script finds it by the `5B 80 "AODT"/"AODE"` bytes.
+**Locating it on Linux.** It is one of `/sys/firmware/acpi/tables/SSDT*`. These files are mode 0400, so reading them needs root. On a B550 AORUS PRO it is almost certainly `SSDT3`, judging by size: 15740 bytes, against 15732 on the PRO V2. Its SSDT6, SSDT8 and SSDT9 sizes also match that dump's ArticDGP, ArticC and AmdTable exactly. That is an inference, not a check. The script finds it by the `5B 80 "AODT"/"AODE"` bytes.
 
 ## 3. Layout of the AODT buffer (byte offsets, little-endian)
 
-Offsets were computed from `Field (AODT, AnyAcc…)` (L23606-23714); the field list totals exactly 0x220C bytes.
+The offsets come from `Field (AODT, AnyAcc…)` (L23606-23714), and the field list adds up to exactly 0x220C bytes.
 
 | Offset | Field | ZenTimings name | Notes |
 |---|---|---|---|
-| 0x00 | ASCD u16, ASTS u32 | — | status |
-| 0x0C / 0x10 | MBVS / MBCB u32 | — | mailbox |
-| 0x14 | MBMC u16 | — | memclk |
-| 0x16-0x1A | TTCL, TRCR, TRCW, TRAS, TTRP | — | timings |
+| 0x00 | ASCD u16, ASTS u32 | | status |
+| 0x0C / 0x10 | MBVS / MBCB u32 | | mailbox |
+| 0x14 | MBMC u16 | | memclk |
+| 0x16-0x1A | TTCL, TRCR, TRCW, TRAS, TTRP | | timings |
 | **27 (0x1B)** | VDIO u16 | MemVddio | mV |
 | **29 (0x1D)** | VMTT u16 | MemVtt | mV |
 | **31 (0x1F)** | VMPP u16 | MemVpp | mV |
@@ -69,16 +69,16 @@ Offsets were computed from `Field (AODT, AnyAcc…)` (L23606-23714); the field l
 | **65 / 66 / 67** | RTNM / RTWR / RTPK | RttNom / RttWr / RttPark | |
 | **86 / 87 / 88** | ACSP / COSP / CESP | AddrCmd / CsOdt / Cke Setup | |
 | **89-92** | CBCK / CBAC / CBCO / CBCE | Clk / AddrCmd / CsOdt / Cke DrvStren | |
-| 0x5D | CDVP u16 | — | "Set CLDO_VDDP" (R230) |
-| 0x7A | FCLK | — | |
-| 0x82 | CVDG u16 | — | "Set CLDO_VDDG" (R238) |
-| 0xA5 | IVDG u16 | — | "Set IOD VDDG" (R309) |
-| 0xCC | DSPD | — | 16 × 0x214 bytes of SPD copies (WMI method 7) |
+| 0x5D | CDVP u16 | | "Set CLDO_VDDP" (R230) |
+| 0x7A | FCLK | | |
+| 0x82 | CVDG u16 | | "Set CLDO_VDDG" (R238) |
+| 0xA5 | IVDG u16 | | "Set IOD VDDG" (R309) |
+| 0xCC | DSPD | | 16 × 0x214 bytes of SPD copies (WMI method 7) |
 
 - The bold rows match ZenTimings `Resistances` exactly (`Common/BiosMemController.cs` L80-98).
 - The units of CDVP, CVDG and IVDG are unverified.
-- The "Set" handlers confirm the mapping: R207→PODT, R222-224→RTT, R229-22F→setup/drive strength, R301-303→VDIO/VMTT/VMPP (SMI 0x9E).
-- This is a sibling board on an unknown BIOS. The script therefore parses the Field list from the running board's own SSDT and checks it against these offsets.
+- The "Set" handlers confirm the mapping. R207 sets PODT, R222-224 set the RTT values, R229-22F set the setup times and drive strengths, and R301-303 set VDIO, VMTT and VMPP (SMI 0x9E).
+- These offsets come from a sibling board on an unknown BIOS, so the script parses the Field list from the running board's own SSDT and checks it against them.
 
 ## 4. Value encodings
 
@@ -92,22 +92,22 @@ Sources: ZenStates-Core `Dictionaries/EncodedValueDictionaries.cs` L101-158 and 
 - **Drive strength (Clk/AddrCmd/CsOdt/Cke):** 0 120, 1 60, 3 40, 7 30, 15 24, 31 20 Ω.
 - **RttNom / RttPark (MR1/MR5):** 0 off, 1 RZQ/4, 2 RZQ/2, 3 RZQ/6, 4 RZQ/1, 5 RZQ/5, 6 RZQ/3, 7 RZQ/7. RZQ = 240 Ω.
 - **RttWr (MR2):** 0 off, 1 RZQ/2, 2 RZQ/1, 3 Hi-Z, 4 RZQ/3.
-- **Setup:** raw value shown as `v (v/32 / v%32)`.
-- **Voltages:** u16 mV.
+- **Setup:** the raw value, shown as `v (v/32 / v%32)`.
+- **Voltages:** u16 in mV.
 
 ## 5. The APOB alternative (ZenTimings' preferred source)
 
 `Hardware/Apob/Apob.cs`:
-- Signature "APOB" (L41) at known physical addresses `0xA200000, 0x9F00000, 0x4000000` (L95, L417-426).
-- Header: u32 signature, version, TableSize, HeaderSize.
-- Entries: u32 group, type, instance, size (including a 48-byte header), then the next entry at +size (`ApobEntry.cs` L14-15). Entries whose group or type ID has 0xFFFF in the upper half are encrypted and skipped (L35).
+- The table starts with the signature "APOB" (L41) and is at one of the known physical addresses `0xA200000, 0x9F00000, 0x4000000` (L95, L417-426).
+- The header has four u32 fields: signature, version, TableSize and HeaderSize.
+- Each entry has four u32 fields, group, type, instance and size. The size includes a 48-byte header, and the next entry starts that many bytes later (`ApobEntry.cs` L14-15). Entries whose group or type ID has 0xFFFF in the upper half are encrypted, and the code skips them (L35).
 
 The MEM group 1 / type 2 entry (`ApobMemGeneralConfig.cs` L46-136) is 496 bytes on Zen2/3:
 - MemClkFreq at data+4.
 - 11 arrays of 8 per-channel bytes at data+0xA4, in this order: ProcOdt, RttNom, RttWr, RttPark, AddrCmdSetup, CsOdtSetup, CkeSetup, ClkDrvStren, AddrCmdDrvStren, CsOdtCmdDrvStren, CkeDrvStren.
-- Same encodings as above. No voltages.
+- It uses the same encodings as above and holds no voltages.
 
-On a B550 AORUS PRO's E820 map, `0xa200000-0xa20dfff` is "ACPI Non-volatile Storage", the expected APOB spot. The signature is unverified.
+On a B550 AORUS PRO's E820 map, `0xa200000-0xa20dfff` is "ACPI Non-volatile Storage", where the APOB is expected. The signature there is unverified.
 
 ## 6. Can it be done reliably on Linux?
 
@@ -115,26 +115,26 @@ On a B550 AORUS PRO's E820 map, `0xa200000-0xa20dfff` is "ACPI Non-volatile Stor
 
 - **The ACPI table file only gives the address, length and layout, not the values.** The values live in physical memory: the AODT buffer and the APOB, both ACPI NVS.
 
-- **The Bazzite kernel blocks `/dev/mem` reads of those pages.** It has `CONFIG_STRICT_DEVMEM=y` and `CONFIG_IO_STRICT_DEVMEM=y`; lockdown is `none` and the default cmdline has no `iomem=`. The kernel code that does this:
-  - e820 marks NVS as `IORESOURCE_BUSY`: `arch/x86/kernel/e820.c` L1084-1106 and L1142-1143 (master `5b0764a`).
-  - `resource_is_exclusive` treats busy regions as exclusive under IO_STRICT_DEVMEM: `kernel/resource.c` L1884-1929.
-  - `devmem_is_allowed` then returns 0: `arch/x86/mm/init.c` L867-895.
-  - `read_mem` returns `-EPERM`: `drivers/char/mem.c` v6.12 L139-143.
-  - The fix is `iomem=relaxed` (`kernel/resource.c` L2153-2160, L2206). On Bazzite: `rpm-ostree kargs --append=iomem=relaxed`, then reboot.
-  - Others hit the same wall: https://github.com/delfianto/zentools/blob/4b1547dd9542975a8f0713d61f7efa0992361056/tools/aod-probe/README.md and ZenTimings issue #18.
+- **The Bazzite kernel blocks `/dev/mem` reads of those pages.** It has `CONFIG_STRICT_DEVMEM=y` and `CONFIG_IO_STRICT_DEVMEM=y`. Lockdown is `none`, and the default command line has no `iomem=`. This is the kernel code that blocks the reads:
+  - e820 marks NVS as `IORESOURCE_BUSY` (`arch/x86/kernel/e820.c` L1084-1106 and L1142-1143, master `5b0764a`).
+  - `resource_is_exclusive` treats busy regions as exclusive under IO_STRICT_DEVMEM (`kernel/resource.c` L1884-1929).
+  - `devmem_is_allowed` then returns 0 (`arch/x86/mm/init.c` L867-895).
+  - `read_mem` returns `-EPERM` (`drivers/char/mem.c` v6.12 L139-143).
+  - The fix is `iomem=relaxed` (`kernel/resource.c` L2153-2160, L2206). On Bazzite, run `rpm-ostree kargs --append=iomem=relaxed`, then reboot.
+  - Other projects hit the same restriction: https://github.com/delfianto/zentools/blob/4b1547dd9542975a8f0713d61f7efa0992361056/tools/aod-probe/README.md and ZenTimings issue #18.
 
-- **The AOD buffer may not be current without the SMI.** The firmware writes it at boot or on the WMI SMI 0x9D. Whether it is filled before any WMI call on F16b is unknown; the script warns if it is all zero. Compare its Tcl/Trcd/Tras against the SMN UMC timings. APOB values are what the AGESA boot loader (ABL) actually applied, so they are more trustworthy.
+- **The AOD buffer may not be current without the SMI.** The firmware writes it at boot or on the WMI SMI 0x9D. Whether F16b fills it before any WMI call is unknown, and the script warns if it is all zero. Compare its Tcl, Trcd and Tras with the SMN UMC timings. The APOB holds the values that the AGESA boot loader (ABL) applied, so its values are more trustworthy.
 
-- **Linux has no supported way to call `\AOD_.WMAA`** (that is, to trigger the SMI the way ZenTimings does). There is no ACPI_CUSTOM_METHOD, no ACPI debugger, and acpi_call is out of tree. AMD's proposed `amd-wmi-aod` driver binds GUID `95F20B61-3D44-41F8-87E1-03CBF94C4E8F`, not this board's ABBC0F6A device (https://www.spinics.net/lists/platform-driver-x86/msg67374.html, msg67369). Writing SMI 0x9D by hand is not recommended: MBCB selects which setting the SMM handler applies.
+- **Linux has no supported way to call `\AOD_.WMAA`**, so it cannot trigger the SMI the way ZenTimings does. The kernel has no ACPI_CUSTOM_METHOD and no ACPI debugger, and acpi_call is out of tree. AMD's proposed `amd-wmi-aod` driver binds GUID `95F20B61-3D44-41F8-87E1-03CBF94C4E8F`, not this board's ABBC0F6A device (https://www.spinics.net/lists/platform-driver-x86/msg67374.html, msg67369). Do not write SMI 0x9D by hand, because MBCB selects which setting the SMM handler applies.
 
 ## 7. Script
 
-The research version of `am4_bios_memcfg.py`, kept for reference; ctune's maintained copy is `ctune/mem/platforms/zen3_am4/am4_bios_memcfg.py`. Run it as root with `python3 -I`.
+This is the research version of `am4_bios_memcfg.py`, kept for reference. ctune's maintained copy is `ctune/mem/platforms/zen3_am4/am4_bios_memcfg.py`. Run it as root with `python3 -I`.
 
 How this version was tested:
 - **Offline only.** It ran on the B550 AORUS PRO V2 SSDT pulled from linuxhw, on hand-made AOD and APOB buffers, and on a pm_table dump from a 5800X3D.
-- **AML parse:** it found AODT at base 0xBAC80018, length 0x220C, and 105 fields whose offsets match ZenTimings.
-- **PM table:** it printed SOC 1.1129, VDDP 0.8973, VDDG 0.9976 / 0.9976 V.
+- **AML parse.** It found AODT at base 0xBAC80018, length 0x220C, and 105 fields whose offsets match ZenTimings.
+- **PM table.** It printed SOC 1.1129, VDDP 0.8973 and VDDG 0.9976 / 0.9976 V.
 
 This version was not run against a live SSDT, `/dev/mem` or APOB.
 
@@ -420,8 +420,8 @@ if __name__ == "__main__":
 
 ## Still unknown
 
-- The B550 AORUS PRO's own AODT base address and the exact `SSDT#`: needs root to read.
+- The B550 AORUS PRO's own AODT base address and the exact `SSDT#`. Reading them needs root.
 - Whether F16b fills the AODT buffer at boot without SMI 0x9D.
 - The units of CDVP, CVDG and IVDG.
-- The `AMD_ACPI` method IDs on this BIOS: decode `/sys/bus/wmi/devices/05901221-D566-11D1-B2F0-00A0C9062910-5/bmof` with bmfdec. The sibling board's AML uses 1–8, matching AMD's documented IDs.
-- That the APOB signature is really at 0xA200000 on the B550 AORUS PRO.
+- The `AMD_ACPI` method IDs on this BIOS. Decoding `/sys/bus/wmi/devices/05901221-D566-11D1-B2F0-00A0C9062910-5/bmof` with bmfdec would give them. The sibling board's AML uses 1 to 8, which matches AMD's documented IDs.
+- Whether the APOB signature is at 0xA200000 on the B550 AORUS PRO.
