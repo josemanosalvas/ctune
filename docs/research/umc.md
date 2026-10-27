@@ -1,8 +1,8 @@
 # DDR4 SMN register map used by ZenTimings / ZenStates-Core on Zen2/Zen3 (Matisse/Vermeer)
 
-I couldn't read the registers on this machine because I'm not root (uid 1000), and the ryzen_smu `smn` node is root-only. So everything below comes from source code and none of it was checked against live hardware. I also couldn't get the AMD PPRs (56214, 55803): the AMD URL returns a 404, and the bugzilla mirror is behind a bot-block. The bit widths below are therefore not checked against AMD documents. I cross-checked them against CoreFreq instead.
+The ryzen_smu `smn` node is root-only and this research ran without root, so everything below comes from source code and none of it was checked against live hardware. I also couldn't get the AMD PPRs (56214, 55803): the AMD URL returns a 404, and the bugzilla mirror is behind a bot-block. The bit widths below are therefore not checked against AMD documents. I cross-checked them against CoreFreq instead.
 
-**Sources** (cloned to `/tmp/zt_src/`):
+**Sources** (pinned commits):
 - **ZSC** = irusanov/ZenStates-Core @869b7e8 (2026-10-05)
 - **ZT** = irusanov/ZenTimings @7532394 (2026-10-09)
 - **CF** = cyring/CoreFreq @20de51c (`x86_64/amd_reg.h`, `corefreqk.c`)
@@ -120,8 +120,8 @@ The value encodings are in ZSC `Dictionaries/EncodedValueDictionaries.cs` and `C
 - **UMC map:** identical. ZSC has no family branch in `Hardware/DRAM` and uses the same DDR4 dictionary for all DDR4 parts (`MemoryConfig.cs:181-182`). CF uses identical constants for Matisse and Vermeer (`corefreqk.c:7238-7248`, `7334-7344`).
 - **PM table:** this is where they differ.
   - Zen2 0x240903: FCLK 0xC0, UCLK 0xC8, MCLK 0xCC, VSOC 0xB4, VDDP 0x1F4, VDDG 0x1F8 (a single VDDG, no CCD value) (`PowerTable.cs:285`).
-  - Zen3 **0x380905** (this machine): FCLK 0xC0, UCLK 0xC8, MCLK 0xCC, VSOC 0xB4, VDDP 0x224, VDDG_IOD 0x228, VDDG_CCD 0x22C (`PowerTable.cs:300`, table size 0x5D0 = 1488, which matches this machine).
-- **Live dump at those offsets:** FCLK = UCLK = MCLK = 1867.2683 (so 1:1:1), VSOC 1.1129, VDDP 0.8973, VDDG IOD and CCD 0.9976. With a BCLK correction of 1.0, ZT would show "3734 MT/s".
+  - Zen3 **0x380905** (Vermeer, e.g. 5800X3D): FCLK 0xC0, UCLK 0xC8, MCLK 0xCC, VSOC 0xB4, VDDP 0x224, VDDG_IOD 0x228, VDDG_CCD 0x22C (`PowerTable.cs:300`, table size 0x5D0 = 1488, which matches a 5800X3D's table).
+- **Example reading at those offsets** (5800X3D at DDR4-3733): FCLK = UCLK = MCLK = 1867.2683 (so 1:1:1), VSOC 1.1129, VDDP 0.8973, VDDG IOD and CCD 0.9976. With a BCLK correction of 1.0, ZT would show "3734 MT/s".
 
 ## Discrepancies and unknowns
 - **MEMCLK field width:** ZSC and RM read [6:0]; CF reads [5:0]. Bit 6 is needed above DDR4-4200 (raw value > 63).
@@ -198,6 +198,4 @@ if __name__ == "__main__":
         for k, v in decode_channel(rd, ch, bclk).items(): print(f"UMC{ch} {k} = {v}")
 ```
 
-Files are in `/var/home/josemanosalvas/.t3/scratch/2026-10-24-snapshot-the-current-ram-settings-01633672/`:
-- `zen_ddr4_umc.py` – the snippet above (also at `/tmp/zt_scripts/zen_ddr4_umc.py`)
-- `raw/pm_table_dump.txt` – the live PM-table dump the cross-check used
+ctune's maintained decoder, corrected by [umc_xcheck.md](umc_xcheck.md), is `ctune/mem/platforms/zen3_am4/zen3_ddr4_decode.py`.

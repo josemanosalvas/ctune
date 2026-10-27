@@ -1,9 +1,9 @@
-# SMU pm_table 0x380905 (Vermeer, 1488 bytes): field map and live values
+# SMU pm_table 0x380905 (Vermeer, 1488 bytes): field map and example values
 
-**Your memory is running at DDR4-3733 with FCLK, UCLK and MCLK coupled 1:1:1 at about 1867 MHz.** The ~1928.18 / 1945.39 values you mentioned for 0x0C0..0x0CC are not in the dump. The dump has 1867.2683 / 1867.1724 / 1867.2683 / 1867.2683. I read the live pm_table 5 more times, 1 s apart, and got 1867.00–1868.34. Nothing points to DDR4-3866.
+**Example reading used throughout:** a 5800X3D on a B550 AORUS PRO with four 8 GiB single-rank DIMMs (two per channel) at DDR4-3733, with FCLK, UCLK and MCLK coupled 1:1:1 at about 1867 MHz. One dump has 1867.2683 / 1867.1724 / 1867.2683 / 1867.2683 at 0x0C0..0x0CC; five more reads 1 s apart gave 1867.00–1868.34.
 
 ## Sources
-I cloned every source to /tmp and pinned it to a commit:
+Every source is pinned to a commit:
 - **RM** — hattedsquirrel/ryzen_monitor @7529c7c, `src/pm_tables.c`: https://github.com/hattedsquirrel/ryzen_monitor/blob/7529c7cfc2688d9781912c84adfc0343d83dc78c/src/pm_tables.c
   - Handler `pm_table_0x380905` is at L662–L860. Its own comment at L663 says "Pure guess. Derived from 0x380805 and 0x380904".
   - Handler 0x380904 is at L462–L660 and 0x380805 at L256–L460.
@@ -16,8 +16,8 @@ I cloned every source to /tmp and pinned it to a commit:
 
 Offset = element index × 4. All values are float32 little-endian.
 
-## Field map, with dump values (17:43 snapshot)
-Values in **bold** have two independent sources (RM and ZSC). Everything else is a ryzen_monitor label only, so treat it as unverified.
+## Field map, with example values
+Values are from the example reading above. Rows in **bold** have two independent sources (RM and ZSC). Everything else is a ryzen_monitor label only, so treat it as unverified.
 
 | Offset | Idx | Field (RM 0x380905 line) | Value |
 |---|---|---|---|
@@ -109,20 +109,17 @@ The 0x380905 handler calls 0x0A0 CPU_TELEMETRY_VOLTAGE, and ryzen_monitor prints
 
 ## Memory-relevant values and arithmetic
 - **Memory speed.** The DDR4 UMC ratio is MemClkFreq bits[6:0] / 3 (ZSC `Hardware/DRAM/Ddr4Timings.cs` L71). DDR4-3733 has raw ratio 56, so MCLK = 56/3 × 100 = 1866.67 MHz.
-  - The SMU's DPM entries at 0x128, 0x138 and 0x148 are exactly 1867.0 (raw 0x44E96000). That reads as the integer-MHz form of 1866.67, which is my inference.
+  - The SMU's DPM entries at 0x128, 0x138 and 0x148 are exactly 1867.0 (raw 0x44E96000). That reads as the integer-MHz form of 1866.67 (an inference).
   - Error: 1867 − 1866.67 = 0.33 MHz, or 0.018 %.
-  - DMI agrees: configured speed 3733 MT/s (`raw/dmi_memory_udev.txt`).
+  - DMI agrees: configured speed 3733 MT/s (SMBIOS type 17).
 - **Coupled mode is ON.** UCLK equals MCLK, which is ryzen_monitor's own test (ryzen_monitor.c L210).
 - **DPM.** FCLK, UCLK and MCLK each have only DPM state 0 filled (1867), states 1–3 are 0, and FCLK residency is 100 % in state 0.
 - **ZenTimings display.** ZenTimings takes frequency = pm MCLK × 2 for DDR4 (ZSC `BaseDramTimings.cs` L256–266) and shows it floored (ZenTimings @7532394 `WPF/ViewModels/MainViewModel.cs` L103). That gives 2 × 1867.0 = 3734, so it would show "3734 MT/s", assuming no BCLK correction is applied.
 - **BCLK.** ZSC multiplies the pm_table FCLK, UCLK and MCLK by BCLK/100 (`PowerTable.cs` L632–645). So the pm_table reports clocks against a nominal 100 MHz and can't reveal the real BCLK.
-- **The 1928.18 / 1945.39 values, in case you saw them elsewhere.** They can't be read as a BCLK effect, because the pm_table doesn't reflect BCLK (previous point).
-  - 1928.18 × 2 = 3856.4 MT/s, which is not a valid Zen 3 step. Valid MCLK steps are 33.33 MHz apart: 1900.00 (ratio 57, DDR4-3800) and 1933.33 (ratio 58, DDR4-3866).
-  - 1928.18 / 1933.33 = 0.99733, and 1928.18 / 1866.67 = 1.0330. Neither fits.
-  - Most likely the numbers were mis-transcribed or came from another source.
-- **VSOC.** Set point 0x0B0 = 1.1995 V (live 1.2000–1.2015). Telemetry 0x0B4 = 1.1129 V (live 1.1112–1.1125); this is what ZenTimings shows as VSOC. ryzen_monitor.c L216 warns the set value "might be the default voltage".
-- **SoC current and power.** 11.10 A (live 10.71–11.65 A); 12.35 W at both 0x064 and 0x0BC. SoC temperature is 30.02 °C at 0x1FC.
-- **LDO voltages.** cLDO_VDDP 0.8973 V, VDDG_IOD 0.9976 V, VDDG_CCD 0.9976 V, VDDM 0.9504 V. These were the same in all live reads.
+- **Valid MCLK steps** are 33.33 MHz apart (ratio/3 × 100 MHz), for example 1866.67 (ratio 56, DDR4-3733), 1900.00 (ratio 57, DDR4-3800) and 1933.33 (ratio 58, DDR4-3866). A clock between those steps is not a DDR4 UMC ratio.
+- **VSOC.** Set point 0x0B0 = 1.1995 V (repeated reads 1.2000–1.2015). Telemetry 0x0B4 = 1.1129 V (repeated reads 1.1112–1.1125); this is what ZenTimings shows as VSOC. ryzen_monitor.c L216 warns the set value "might be the default voltage".
+- **SoC current and power.** 11.10 A (repeated reads 10.71–11.65 A); 12.35 W at both 0x064 and 0x0BC. SoC temperature is 30.02 °C at 0x1FC.
+- **LDO voltages.** cLDO_VDDP 0.8973 V, VDDG_IOD 0.9976 V, VDDG_CCD 0.9976 V, VDDM 0.9504 V. These were the same in all repeated reads.
 - **Memory-related power (SMU estimates, unverified labels).**
 
 | Offset | Field | Value |
@@ -135,9 +132,6 @@ The 0x380905 handler calls 0x0A0 CPU_TELEMETRY_VOLTAGE, and ryzen_monitor prints
 
 - **No DRAM voltage.** This table has no field for the DIMM supply (VDIMM) in any source.
 - **0x2AC = 1593.0** is idx 171, labelled DPM_Skipped (RM L815, and L415 for 0x380805).
-  - It read 1593.0 in the dump and in all 5 live reads, so it is not acting like a running counter.
+  - It read 1593.0 in the dump and in all 5 repeated reads, so it is not acting like a running counter.
   - `pm_tables.h` L249–251 says the DPM_Skipped / MP5_BUSY naming is uncertain.
   - What it means is unknown. No source ties it to memory.
-
-## Side note on DIMM count
-The context assumes "likely 2 DIMMs", but `raw/dmi_memory_udev.txt` lists **4 DIMMs**: channel A DIMM 0/1 and channel B DIMM 0/1. Each is 8 GiB, single rank, part number "4400 C19 Series", configured at 3733 MT/s. So the board is running 2 DIMMs per channel.

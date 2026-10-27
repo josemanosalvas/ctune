@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Offline tests for the mprime workload: prime.txt per mode and the verdict parser. Fixtures are real mprime 30.19b20
-output captured on this machine (2026-10-25), plus failure lines quoted from the mprime source (commonb.c).
+output captured on a Ryzen 7 5800X3D, plus failure lines quoted from the mprime source (commonb.c).
 
 Run from the repo root:  python3 -B -m unittest discover -s tests
 """

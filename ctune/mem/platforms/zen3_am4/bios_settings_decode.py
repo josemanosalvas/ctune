@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Decode the live AMI Aptio V / Gigabyte BIOS setup configuration from EFI variables + the HII database.
 
-Inputs (defaults = the F16b snapshot):
+Inputs (defaults = the snapshot in $CTUNE_SNAPSHOT; ram_snapshot.py passes them explicitly):
   --hiidb    raw/fwmem/hiidb.bin           HII database exported by AMI (EFI var 'HiiDB' -> phys address)
   --efivars  raw/efivars/                  copies of /sys/firmware/efi/efivars/* (4-byte attribute header + data)
   --live     /sys/firmware/efi/efivars     read-only fallback for varstores that were not captured
@@ -34,7 +34,7 @@ import sys
 import uuid
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-SNAP = os.path.normpath(os.path.join(HERE, "..", "snapshots", "20261024-181828_F16b"))
+SNAP = os.environ.get("CTUNE_SNAPSHOT", "")   # a ctune snapshot directory, for the argument defaults
 
 
 def load_hii_module():
@@ -675,7 +675,7 @@ def find_row(res, store, path, prompt, op=None, width=None):
 
 # Gigabyte "Advanced Voltage Settings" (Setup varstore) store a UI code, not millivolts. 0xFFFF = Auto.
 # Ranges below come from Gigabyte's EasyTune ACPI voltage table "GSAT" (Name(GSAT, Package(){...}) in an
-# SSDT of the F19c image, decompressed from /tmp/gbzips/x_f19c/B550AORUSPRO.F19c; the F16b SSDT could not be
+# SSDT of the F19c image, decompressed from B550AORUSPRO.F19c; the F16b SSDT could not be
 # read without root): entry = {id, name, {type, chip, i2c addr, loop, reg}, {f1, f2, {min, max, step, divisor}}, ..., default}.
 # code -> volts assumed = (min + code*step)/divisor ("index from min"). Evidence: DRAM code 55 -> 1.550 V agrees with the
 # DDR VTT proxy (IT8792E in1 0.763 V -> ~1.53 V); the "from max" reading (1.45 V) does not. For CPU Vcore / VCORE SOC

@@ -165,7 +165,7 @@ if __name__ == "__main__":
 
 
 class ReviewRegressions(unittest.TestCase):
-    """Defects found by the 2026-10-25 review, kept fixed."""
+    """Runner, marker and verdict defects, kept fixed."""
 
     def test_unknown_unit_state_keeps_a_live_marker(self):
         real = stress.unit_state
@@ -220,7 +220,7 @@ class ReviewRegressions(unittest.TestCase):
             cpu.test([0], seconds_per_core=30, workload="sse-huge")
 
     def test_detached_start_passes_the_tests_own_kind(self):
-        """mem_test and gpu_test take a `kind` that collided with the runner's own (2026-10-27)."""
+        """mem_test and gpu_test take a `kind` argument, which must not collide with the runner's own."""
         import json
         from unittest import mock
         from ctune import mcp_server
@@ -239,7 +239,7 @@ class ReviewRegressions(unittest.TestCase):
         inline.assert_called_once_with(kind="core")
 
     def test_a_test_blocks_sleep_and_flags_one_that_happens_anyway(self):
-        """A 90 min RAM test slept 34 min of it and still reported green (2026-10-27)."""
+        """A suspend pauses the loads while the test's timer keeps counting: a test that slept must not report green."""
         import subprocess
         from unittest import mock
         from ctune.core import journal

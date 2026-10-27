@@ -24,7 +24,7 @@ os.environ.setdefault("CTUNE_DATA", tempfile.mkdtemp(prefix="ctune-test-data-"))
 from ctune.gpu import boot_apply, install, persist  # noqa: E402
 from ctune.core.signoff import MINUTES  # noqa: E402
 
-IDENT = {"gpu_uuid": "GPU-fa9f0f08", "driver": "615.78.08"}
+IDENT = {"gpu_uuid": "GPU-12345678", "driver": "615.78.08"}
 UV = {"core_offset": 150, "mem_offset": 0, "max_clock": 1860, "power_limit": 400.0}
 
 
@@ -66,7 +66,7 @@ class Plan(unittest.TestCase):
             self.assertIn("full gpu phase", p["reasons"][0])
 
     def test_another_driver_needs_a_new_signoff(self):
-        p = persist.plan(UV, self.rb(), IDENT, [signoff(UV, ident={"gpu_uuid": "GPU-fa9f0f08", "driver": "610.1"})])
+        p = persist.plan(UV, self.rb(), IDENT, [signoff(UV, ident={"gpu_uuid": "GPU-12345678", "driver": "610.1"})])
         self.assertFalse(p["ok"])
         self.assertIn("run it again", p["reasons"][0])
 
@@ -90,7 +90,7 @@ if "-pl" in a:
 elif "--query-gpu=power.min_limit" in a:
     print("100.00")
 elif "-rgc" not in a:
-    print("GPU-fa9f0f08, {driver}, " + open("{d}/pl").read().strip() + ", 400.00")
+    print("GPU-12345678, {driver}, " + open("{d}/pl").read().strip() + ", 400.00")
 """
 FAKE_OC = """#!{py}
 import json, os, sys
@@ -336,17 +336,17 @@ class RuntimeApply(FakeGpu, unittest.TestCase):
             self.assertEqual(f.readline().strip(), "#!/usr/bin/python3 -IB")
 
     def test_polkit_rule_names_the_programs_one_user_and_root(self):
-        rule = install.polkit_rule("josemanosalvas", programs=["/var/usrlocal/libexec/ctune/gpu-runtime-apply"])
+        rule = install.polkit_rule("alice", programs=["/var/usrlocal/libexec/ctune/gpu-runtime-apply"])
         self.assertIn('var programs = ["/var/usrlocal/libexec/ctune/gpu-runtime-apply"];', rule)
         self.assertIn('programs.indexOf(action.lookup("program")) >= 0', rule)
         self.assertIn('action.lookup("user") == "root"', rule)
-        self.assertIn('subject.user == "josemanosalvas"', rule)
-        full = install.polkit_rule("josemanosalvas")
+        self.assertIn('subject.user == "alice"', rule)
+        full = install.polkit_rule("alice")
         for p in install.PROGRAMS:
             self.assertIn(f'"{os.path.realpath(p)}"', full)
         self.assertEqual(full.count("polkit.Result.YES"), 1)
         with self.assertRaises(ValueError):
-            install.polkit_rule("josemanosalvas", programs=['/x"]; polkit.Result.YES; ["'])
+            install.polkit_rule("alice", programs=['/x"]; polkit.Result.YES; ["'])
         for bad in ('x" || true || "', "Root", "a b", ""):
             with self.assertRaises(ValueError):
                 install.polkit_rule(bad)

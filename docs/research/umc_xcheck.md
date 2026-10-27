@@ -1,13 +1,13 @@
-I checked every item in the earlier report against ZenStates-Core, ZenTimings, CoreFreq, ryzen_monitor, ryzen_smu and the Linux kernel, all cloned or fetched fresh. All the main bit ranges, offsets and formulas are confirmed. I found five things that are wrong, all in side details rather than the timing bit ranges:
+I checked every item in the earlier report ([umc.md](umc.md)) against ZenStates-Core, ZenTimings, CoreFreq, ryzen_monitor, ryzen_smu and the Linux kernel, all cloned or fetched fresh. All the main bit ranges, offsets and formulas are confirmed. I found five things that are wrong, all in side details rather than the timing bit ranges:
 - the "old width" attribution for tFAW and tWR
 - which ZenTimings file held the old hard-coded reader
 - how RDPRE is displayed
 - the claim that the kernel never uses ryzen_smu's index register
 - the line cited for the Vermeer voltage address
 
-The bit widths still can't be checked against AMD documents. I downloaded both public PPRs (56214 rev 3.05 for Vermeer and 55803 rev 0.91 for Rome, via the Wayback Machine). Neither describes the UMC channel registers; they only cover the UMC machine-check registers. Nothing was read from live hardware, because I'm not root.
+The bit widths still can't be checked against AMD documents. I downloaded both public PPRs (56214 rev 3.05 for Vermeer and 55803 rev 0.91 for Rome, via the Wayback Machine). Neither describes the UMC channel registers; they only cover the UMC machine-check registers. Nothing was read from live hardware.
 
-Sources: ZenStates-Core (ZSC) @869b7e8, ZenTimings (ZT) @7532394, CoreFreq (CF) @20de51c, ryzen_monitor (RM) @7529c7c, ryzen_smu (RS) @d298366 (version 0.1.7, same as the loaded module), Linux (LX) master fetched 2026-10-24. "DDR4Dict" means `ZSC Dictionaries/DDR4Dictionary.cs`; "CF" means `CF x86_64/amd_reg.h` unless a file is named.
+Sources: ZenStates-Core (ZSC) @869b7e8, ZenTimings (ZT) @7532394, CoreFreq (CF) @20de51c, ryzen_monitor (RM) @7529c7c, ryzen_smu (RS) @d298366 (version 0.1.7), Linux (LX) master fetched 2026-10-24. "DDR4Dict" means `ZSC Dictionaries/DDR4Dictionary.cs`; "CF" means `CF x86_64/amd_reg.h` unless a file is named.
 
 ## WRONG
 
@@ -22,7 +22,7 @@ Sources: ZenStates-Core (ZSC) @869b7e8, ZenTimings (ZT) @7532394, CoreFreq (CF) 
    - `LX amd_node.c:45-46,138-140` defines `HSMP_INDEX/DATA` as 0xC4/0xC8, the same pair ryzen_smu uses (`RS smu.h:31-32`).
    - The kernel's `amd_smn_hsmp_rdwr()` uses that pair under the kernel's own mutex, not ryzen_smu's.
    - `amd_smn_read`/`amd_smn_write` do use 0x60/0x64 (`amd_node.c:42-43,121,134`).
-   - No hsmp module is loaded on this machine (lsmod), so a collision is unlikely here.
+   - A collision needs the hsmp module loaded (check `lsmod`); it was not loaded on the 5800X3D system checked.
 5. **Line cite `Cpu.cs:1450-1458`.** Lines 1450-1451 are the APU case. The Vermeer case is 1455-1459 and Matisse is 1430-1433. Both give the SoC plane 0x5A00C (`Constants.cs:17,21`), so the address itself is correct.
 
 ## CONFIRMED
@@ -106,7 +106,7 @@ The earlier script's FIELDS list matches all of these.
 **Voltages and PM table**
 - VSOC = 1.55 − 0.00625 × VID, VID at [23:16] (`ZT SVI2Plugin.cs:78,85-86`; `Utils.cs:109-112`; `CF:2394,2401`). ZT re-reads while bits [15:8] are non-zero (`SVI2Plugin.cs:57`).
 - PM table rows: `PowerTable.cs:285` (0x240903) and `:300` (0x380905, size 0x5D0).
-- I re-read the offsets from `pm_table.bin`: 0xCC = 1867.2683, 0xC0 = 0xC8 = 1867.2683, 0xB4 = 1.11294, 0x224 = 0.89728, 0x228 = 0x22C = 0.99759. That gives floor(2 × 1867.27) = 3734 MT/s at a BCLK correction of 1.0.
+- An example pm_table dump (5800X3D at DDR4-3733) reads, at these offsets: 0xCC = 1867.2683, 0xC0 = 0xC8 = 1867.2683, 0xB4 = 1.11294, 0x224 = 0.89728, 0x228 = 0x22C = 0.99759. That gives floor(2 × 1867.27) = 3734 MT/s at a BCLK correction of 1.0.
 
 **ryzen_smu access**
 - A 4-byte write means read, an 8-byte write means SMN write (`RS drv.c:238-261`).
@@ -125,19 +125,19 @@ The earlier script's FIELDS list matches all of these.
 - Every UMC bit width against AMD. Only ZSC and CF agree with each other; the public PPRs have no UMC channel registers.
 - MEMCLK bit 6.
 - Whether address config lives at 0x30 or 0x40 on Zen3.
-- The actual BCLK on this machine (Linux has no Mmio path; 100 MHz is assumed).
+- The actual BCLK on a running system (Linux has no Mmio path; 100 MHz is assumed).
 - How ZSC slot labels map to the B550 AORUS PRO silkscreen.
 - Whether Linux `/dev/mem` allows reading the APOB.
 
 ## Other findings
 
-- **4 modules, not 2.** DMI (`raw/dmi_memory_udev.txt`) lists 4 × 8 GB single-rank modules (Channel A and B, DIMM 0 and DIMM 1), not the "likely 2 DIMMs" in the brief. If that's right, both 0x50260 and 0x50264 should be programmed. The DIMM 1 entries report serial 00000000.
+- **Two DIMMs per channel.** With 4 single-rank modules (Channel A and B, DIMM 0 and DIMM 1 in SMBIOS), both 0x50260 and 0x50264 should be programmed.
 - **Failed reads are silent.** If an SMN read fails, ryzen_smu keeps the previous value and still accepts the write (`drv.c:247-248`), so a failure can't be detected from userspace.
 - **`smn` is world-readable.** Its mode is 0644 (`drv.c:57-59,283`): readable by anyone, writable only by root.
 
 ## Corrected decode function
 
-It passed my round-trip tests on synthetic register values (`/tmp/verify_scripts/test_decode.py`), not on live hardware. Run it as root with `sudo python3 -I zen3_ddr4_decode_verified.py [pm_mclk_mhz] [bclk_mhz]`; pass 1867.2683 as the PM-table MCLK to reproduce ZenTimings' 3734 MT/s.
+It passed round-trip tests on synthetic register values, not on live hardware. ctune's maintained copy is `ctune/mem/platforms/zen3_am4/zen3_ddr4_decode.py`. Run it as root with `sudo python3 -I zen3_ddr4_decode.py [pm_mclk_mhz] [bclk_mhz]`; pass 1867.2683 as the PM-table MCLK to reproduce ZenTimings' 3734 MT/s.
 
 ```python
 #!/usr/bin/env python3
@@ -384,13 +384,6 @@ if __name__ == "__main__":
     print(json.dumps({"raw": {hex(k): hex(v) for k, v in sorted(regs.items())},
                       "decoded": decode_all(regs, pm_mclk_mhz=pm, bclk_mhz=bclk)}, indent=1))
 ```
-
-Files:
-- /var/home/josemanosalvas/.t3/scratch/2026-10-24-snapshot-the-current-ram-settings-01633672/zen3_ddr4_decode_verified.py
-- /tmp/verify_scripts/zen3_ddr4_decode.py (same file)
-- /tmp/verify_scripts/test_decode.py (tests)
-- /tmp/verify_src/ (cloned sources)
-- /tmp/verify_dl/ppr56214/56214-B0-PUB_3.05_PPR.pdf and /tmp/verify_dl/ppr55803/ppr.pdf (the two PPRs)
 
 Web sources used:
 - [AMD 56214 PPR zip](https://www.amd.com/content/dam/amd/en/documents/processor-tech-docs/programmer-references/56214-B0-PUB.zip)

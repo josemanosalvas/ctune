@@ -159,7 +159,7 @@ def check_interrupted(boot=None):
     """Record a test that did not finish.
     Another boot: the machine crashed or rebooted (red). The record keeps the crashed boot's newest error lines and an
     unfiltered tail, plus the next boot's hardware-error and reset-reason lines, while the journal still has them (it
-    rotates within hours here; `ctune boot-check --install` saves them at every boot).
+    can rotate within hours under heavy logging; `ctune boot-check --install` saves them at every boot).
     Same boot, process gone: it was stopped, killed or ran out of memory, which says nothing about stability (a note).
     An unknown state (the user manager cannot be asked) records nothing and keeps the marker."""
     m = marker_read()
@@ -252,8 +252,8 @@ def _slept_s():
 
 
 def _inhibit_sleep(why):
-    """Holders that block suspend while a test runs. A suspend pauses the loads while their timers keep counting: on
-    2026-10-27 a 90 min RAM test slept 34 min of it. logind's lock covers sleep requests in general; GNOME's idle
+    """Holders that block suspend while a test runs. A suspend pauses the loads while their timers keep counting, so a
+    test that slept would report time it never ran. logind's lock covers sleep requests in general; GNOME's idle
     suspend asks only its own session, so it gets a session lock too."""
     cmds = [["systemd-inhibit", "--what=sleep", "--who=ctune", f"--why={why}", "--mode=block"]]
     if "GNOME" in os.environ.get("XDG_CURRENT_DESKTOP", "") and os.environ.get("DBUS_SESSION_BUS_ADDRESS"):

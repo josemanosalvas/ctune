@@ -1,5 +1,5 @@
 {
- "_source": "Rows at the KEY and GBT_VOLT menu locations of ctune/mem/platforms/zen3_am4/bios_settings_decode.py. F16b: the runtime HII database of snapshot 20261025-085432_F16b (visible_now under its settings). F19c: the Setup, AMD CBS (0x7a19), AMD Overclocking and AMD PBS form packages carved from B550AORUSPRO.F19c (LZMA volume at image offset 0x1b10e88), so visible_now is unknown and the per-core Curve Optimizer questions, which AGESA adds at boot, are absent.",
+ "_source": "Rows at the KEY and GBT_VOLT menu locations of ctune/mem/platforms/zen3_am4/bios_settings_decode.py. F16b: the runtime HII database of a B550 AORUS PRO snapshot (visible_now under its settings). F19c: the Setup, AMD CBS (0x7a19), AMD Overclocking and AMD PBS form packages carved from B550AORUSPRO.F19c (LZMA volume at image offset 0x1b10e88), so visible_now is unknown and the per-core Curve Optimizer questions, which AGESA adds at boot, are absent.",
  "F16b": [
  {"form_path":"AMD Overclocking Option","prompt":"Precision Boost Overdrive","op":"ONE_OF","varstore":"AOD_SETUP","offset":142,"width":1,"visible_now":true},
  {"form_path":"AMD Overclocking Option","prompt":"PBO Limits","op":"ONE_OF","varstore":"AOD_SETUP","offset":143,"width":1,"visible_now":true},

@@ -1,8 +1,8 @@
 # Graphics and ray-tracing loads: Unigine Superposition, Quake II RTX
 
-Researched on 2026-10-27 from web pages, source files, test profiles and the first bytes of each archive; the facts below have their sources, and "unconfirmed" means no primary source was found. The Decision section adds what the downloads and the live runs on this machine showed the same day. The Open list keeps what is still unsettled.
+Researched from web pages, source files, test profiles and the first bytes of each archive; the facts below have their sources, and "unconfirmed" means no primary source was found. The Decision section adds what the downloads and example runs on an RTX 3080 Ti under Bazzite (Fedora 44) showed. The Open list keeps what is still unsettled.
 
-## Decision (2026-10-27)
+## Decision
 ctune uses **Quake II RTX** as the graphics part of the sign-off's gpu phase (`ctune/gpu/q2rtx.py`) and not Superposition:
 - Q2RTX loads the RT cores; Superposition on Linux is OpenGL raster only.
 - Q2RTX has no licence question. Driving Superposition Basic from a script is a grey zone that only Unigine can settle.
@@ -10,7 +10,7 @@ ctune uses **Quake II RTX** as the graphics part of the sign-off's gpu phase (`c
 
 Neither checks what it renders, so gpu-burn stays the test of correct results, and Q2RTX is red only on a crash, a lost device, a hang or an Xid.
 
-Checked on this machine on 2026-10-27, without running it:
+Checked on Bazzite (Fedora 44), without running it:
 - The tarball's SHA256 matches.
 - It holds `baseq2/pak0.pak` (1106 files, with `demos/q2demo1.dm2` and `maps/demo1-3.bsp`), `q2rtx_media.pkz` (907 MB), `shaders.pkz`, `q2rtx.sh` and `find-retail-paks.sh`. It unpacks to 1.1 GB.
 - **The binary does not run on Fedora 44 as shipped.** It needs `libssl.so.1.1` and `libcrypto.so.1.1` (`readelf -d`), and Fedora 44 has only OpenSSL 3.
@@ -20,7 +20,7 @@ Checked on this machine on 2026-10-27, without running it:
   - `bwrap` is on the host. No package was layered.
 - `ctune gpu q2rtx-setup` downloads both, checks both hashes, unpacks them into `tools/q2rtx/` and `tools/steamrt-sniper/`, and writes `tools/q2rtx/VERSION`.
 
-Live runs on 2026-10-27, all at a 1905 MHz lock, +70 MHz offset and 400 W, from a systemd user unit:
+Example runs on an RTX 3080 Ti, all at a 1905 MHz lock, +70 MHz offset and 400 W, from a systemd user unit:
 - `gamescope --backend headless -w W -h H -W W -H H -- SteamLinuxRuntime_sniper/run -- q2rtx …` works on the NVIDIA driver, with no window on the desktop. `XDG_DATA_HOME` reaches the game through pressure-vessel, so `console.log` lands under ctune's data. The log said `Using VK_KHR_ray_query`.
 - One `q2demo1` pass, with the gamescope and runtime start included, took 15 s at 3440×1440 (70.7 FPS), 12.8 s at 2560×1440 (92.9 FPS) and 10 s at 1920×1080 (152 FPS). FPS varied about ±2 % between passes.
 - 3440×1440: 1882 MHz at 382 W, at the power cap the whole time, `at_lock_share` 0.52.
@@ -40,7 +40,7 @@ Live runs on 2026-10-27, all at a 1905 MHz lock, +70 MHz offset and 400 W, from 
 - **Licence blocker (grey zone).** Phoronix Test Suite runs the Basic build unattended by starting the engine binary `bin/superposition` directly and skipping the launcher (see below). The EULA neither allows nor forbids this. Unigine sells command-line automation as a Pro feature. Unconfirmed whether doing it under Basic is within the licence; only Unigine (licensing@unigine.com) can answer.
 
 ### Download
-- **Current version: 1.1 (2019).** URL: https://assets.unigine.com/d/Unigine_Superposition-1.1.run. Size 1,642,169,125 bytes; Last-Modified is 2025-11-21 (HTTP HEAD, checked 2026-10-27). The download page says 1564 MB. Unigine also offers a `.torrent` (FreeBSD port Makefile L4).
+- **Current version: 1.1 (2019).** URL: https://assets.unigine.com/d/Unigine_Superposition-1.1.run. Size 1,642,169,125 bytes; Last-Modified is 2025-11-21 (HTTP HEAD). The download page says 1564 MB. Unigine also offers a `.torrent` (FreeBSD port Makefile L4).
 - **Checksum.** Unigine publishes none. The FreeBSD port pins SHA256 `7494e1c73bf59ef2161513d5d5cb9d9bffbd8479929d4976ac53b6955de580f8` at the same size (https://cgit.freebsd.org/ports/plain/benchmarks/linux-unigine-superposition/distinfo, timestamp 2026-01-18). This is a third-party hash.
   - Unigine has replaced its files before without changing the name. PTS had to update the 1.0 Linux hashes in 2018 and again in 2020 (https://github.com/phoronix-test-suite/test-profiles/issues/37; changelog of `pts/unigine-super-1.0.7`). Pin the hash and expect it to drift.
   - The 1.0 file is still served: https://assets.unigine.com/d/Unigine_Superposition-1.0.run, 1,641,749,718 bytes, Last-Modified 2018-07-11. PTS still uses it (`pts/unigine-super-1.0.8/downloads.xml` L6-8). PTS's last hash for it is SHA256 `ba828e48…5d8a32` (`unigine-super-1.0.6/downloads.xml`).
@@ -54,7 +54,7 @@ Live runs on 2026-10-27, all at a 1905 MHz lock, +70 MHz offset and 400 W, from 
   - `bin/superposition_cli` (the Pro CLI, shipped in Basic too);
   - a bundled Qt 5 with only the xcb (X11) platform plugin;
   - `data/{core,data,superposition}.ung`.
-- **System libraries.** The manual asks for glibc 2.15+ ("System Requirements") and OpenGL 4.5 Core ("Tips: Linux"). The FreeBSD port pulls in dbus, dri (GL), openal-soft and the X.org libraries (Makefile L26). On this machine `ldconfig -p` has libGL, libEGL, libX11, libXext, libXrandr, libXinerama, libXi, libXrender, libXcursor, libxcb, libxkbcommon, libdbus-1, fontconfig and freetype. The exact NEEDED list of `bin/superposition` is unconfirmed (see Open).
+- **System libraries.** The manual asks for glibc 2.15+ ("System Requirements") and OpenGL 4.5 Core ("Tips: Linux"). The FreeBSD port pulls in dbus, dri (GL), openal-soft and the X.org libraries (Makefile L26). On Bazzite (Fedora 44) `ldconfig -p` has libGL, libEGL, libX11, libXext, libXrandr, libXinerama, libXi, libXrender, libXcursor, libxcb, libxkbcommon, libdbus-1, fontconfig and freetype. The exact NEEDED list of `bin/superposition` is unconfirmed (see Open).
 
 ### Starting a run without clicks
 - **PTS command.** PTS `pts/unigine-super-1.0.8` (phoronix-test-suite commit be12163, `install.sh` L9) runs:
@@ -80,7 +80,7 @@ Live runs on 2026-10-27, all at a 1905 MHz lock, +70 MHz offset and 400 W, from 
 ### What hardware it uses
 - **Raster only.** It renders through OpenGL 4.5 on Linux. Its "SSRTGI" is screen-space ray-traced GI done in shaders (manual, "Key Features"). Version 1.0 came out in April 2017 (manual, "Version History"), before GPUs had RT cores, and core OpenGL has no hardware ray-tracing API. **RT cores: not used** (inference; no Unigine statement found).
 - It does load the shaders, TMUs and ROPs, which gpu-burn does not.
-- **Speed on this GPU.** OpenBenchmarking lists the RTX 3080 Ti at 165 ± 8 FPS on average at 1080p High OpenGL (14 public results; same page). No primary power or clock measurement was found.
+- **Speed on an RTX 3080 Ti.** OpenBenchmarking lists the RTX 3080 Ti at 165 ± 8 FPS on average at 1080p High OpenGL (14 public results; same page). No primary power or clock measurement was found.
 
 ### Running from a systemd user unit
 - **X11 only, so it runs through Xwayland.** The launcher's Qt has only `libqxcb.so` (FreeBSD pkg-plist). That the engine is X11/GLX too is unconfirmed but likely. The user manager has `DISPLAY=:0` and `WAYLAND_DISPLAY=wayland-0` (`systemctl --user show-environment`).
@@ -104,7 +104,7 @@ Live runs on 2026-10-27, all at a 1905 MHz lock, +70 MHz offset and 400 W, from 
   - The AUR `q2rtx-data` PKGBUILD installs `q2rtx/baseq2/*.pak` and `*.pkz` from this tarball.
   - PTS `pts/quake2rtx-1.8.0` extracts the tarball and runs `+demo q2demo1.dm2` with no data step (`install.sh` L8-25). `q2demo1.dm2` is the demo inside id's shareware `pak0.pak`; PTS `yquake2-1.3.0` takes it from `q2-314-demo-x86.exe`.
   - A full listing would confirm it (see Open).
-- **Requirements.** The NVIDIA driver must be at least 460.82 (`readme.md` L99), and the engine checks the version (`src/refresh/vkpt/main.c` L1181). It is built in the Steam Runtime "sniper" SDK (`.github/workflows/build.yml` L54) with SDL2, OpenAL, curl and zlib from submodules. At run time it needs `libvulkan.so.1`, which is present here. Its exact NEEDED list is unconfirmed.
+- **Requirements.** The NVIDIA driver must be at least 460.82 (`readme.md` L99), and the engine checks the version (`src/refresh/vkpt/main.c` L1181). It is built in the Steam Runtime "sniper" SDK (`.github/workflows/build.yml` L54) with SDL2, OpenAL, curl and zlib from submodules. At run time it needs `libvulkan.so.1`, which the NVIDIA driver's Vulkan loader setup provides. Its exact NEEDED list is unconfirmed.
 
 ### Starting a run without clicks
 - **PTS command** (`quake2rtx-1.8.0/install.sh` L25):
@@ -166,7 +166,7 @@ Live runs on 2026-10-27, all at a 1905 MHz lock, +70 MHz offset and 400 W, from 
 - **Superposition 1.0 versus 1.1.** The PTS arguments were written for 1.0, which has been repacked twice. Version 1.1 packs its data in `.ung` archives. The PTS `-data_path` and `-engine_config` paths may not work on 1.1.
 - **Superposition cannot loop in Basic.** Looping means relaunching. A relaunch reloads the scene, so the load has gaps.
 - **Neither tool checks its output.** A pass means "did not crash or hang". Errors in RT-core or ROP results go unseen unless they crash the driver (Xid), so `gpu_xid` and the kernel log stay the main signal. gpu-burn remains the only test that checks results.
-- **Screen blanking.** GNOME may blank or lock the screen during a multi-hour run. Whether rendering continues then is unconfirmed (see Open). ctune already holds `gnome-session-inhibit --inhibit suspend` (`ctune/core/stress.py` L258-260); `--inhibit idle` is a valid action (`gnome-session-inhibit --help`, gnome-session 50.1).
+- **Screen blanking.** GNOME may blank or lock the screen during a multi-hour run. Whether rendering continues then is unconfirmed (see Open). ctune already holds `gnome-session-inhibit --inhibit suspend` (`_inhibit_sleep` in `ctune/core/stress.py`); `--inhibit idle` is a valid action (`gnome-session-inhibit --help`, gnome-session 50.1).
 
 ## Comparison
 

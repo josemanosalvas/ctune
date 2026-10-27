@@ -149,8 +149,8 @@ class Pauser(unittest.TestCase):
 
 
 class SharedGpu(unittest.TestCase):
-    """On 2026-10-27 a unit-test run with a scratch CTUNE_DATA called gpu.test for real, and its `podman run --replace`
-    killed the campaign's running gpu-burn container: a false red for GPU step 2."""
+    """A unit-test run with a scratch CTUNE_DATA must never call gpu.test for real: a `podman run --replace` would
+    kill a campaign's running gpu-burn container and turn its step red."""
 
     def test_offline_tests_cannot_start_podman_or_a_tool(self):
         import glob
@@ -274,7 +274,7 @@ for i in 1 2 3 4; do echo "$i iteration. Passed 1.2 seconds  written: 9.5GB 800.
 
 class VramAllocation(unittest.TestCase):
     """memtest_vulkan exits 68 with no output when it cannot allocate its buffer: free VRAM had fallen after ctune
-    read it (18:34 on 2026-10-27, right after a gpu-burn container exited; 12:12, at a mem_test fabric start)."""
+    read it (for example right after a gpu-burn container exited, or at a mem_test fabric start)."""
 
     def setUp(self):
         d = tempfile.mkdtemp(prefix="ctune-fake-memtest-")
@@ -337,8 +337,8 @@ def _result(ts, offset, lock, fp64, fp32, verdict="green"):
 
 class ClockStretch(unittest.TestCase):
     """Too little voltage makes Ampere stretch its clock: NVML still shows the requested MHz, but less work gets done
-    per MHz. GPU step 3 (+70 at 1905 MHz, 2026-10-27) had no error, yet FP64 fell from 519 to 497 GFLOPS at the same
-    1905 MHz; it had to be spotted by hand."""
+    per MHz. In these fixtures step 3 (+70 at 1905 MHz) has no error, yet FP64 falls from 519 to 497 GFLOPS at the
+    same 1905 MHz; nothing but the work per MHz shows it."""
 
     STOCK = _result("2026-10-27T17:40:05+0100", None, None, (542, 1988), (26438, 1682))
     STEP1 = _result("2026-10-27T18:12:56+0100", 0, 1905, (519, 1905), (26435, 1682))

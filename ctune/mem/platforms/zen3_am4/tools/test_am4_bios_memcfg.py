@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Offline tests for am4_bios_memcfg.py (the 2026-10-24 APOB / SPD / Easy* / NVS additions). No root needed.
+"""Offline tests for am4_bios_memcfg.py (the APOB / SPD / Easy* / NVS sections). No root needed.
 
 Usage: python3 -I test_am4_bios_memcfg.py OUTDIR [--work DIR] [--sibling-tables DIR]
 
@@ -13,7 +13,10 @@ Everything is synthetic, built from the documented layouts:
   * An AOD SSDT (OperationRegion + Field AML, ACPI 6.5 sec. 20.2) and an AODT buffer with DSPD SPD copies.
   * EDK2 DXE pool headers/tails (MdeModulePkg/Core/Dxe/Mem/Pool.c) in front of the Easy* buffers and the AODT.
   * A sparse 'physical memory' image (--devmem), a fake /sys/firmware/memmap and the snapshot's real efivars.
-The MR / SPD values are invented test vectors, not this PC's settings.
+The MR / SPD values and serials are invented test vectors, not a real machine's settings.
+The offline run needs a ctune snapshot for its pm_table and efivars (CTUNE_SNAPSHOT=data/snapshots/<name>). The
+byte-identity check of the first three sections also needs a copy of am4_bios_memcfg.py from before the further
+sections (CTUNE_MEMCFG_BEFORE=FILE); without it that check is skipped.
 """
 import argparse, contextlib, hashlib, importlib.util, io, json, os, random, shutil, struct, subprocess, sys, time
 
@@ -21,7 +24,7 @@ sys.dont_write_bytecode = True  # no __pycache__ next to the scripts / the refer
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 SCRIPT = os.path.join(os.path.dirname(HERE), "am4_bios_memcfg.py")
-SNAP = os.path.join(os.path.dirname(HERE), "snapshots", "20261024-181828_F16b")
+SNAP = os.environ.get("CTUNE_SNAPSHOT", "")
 spec = importlib.util.spec_from_file_location("bm", SCRIPT)
 bm = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(bm)
@@ -94,7 +97,7 @@ def spd_image(serial, part="4400 C19 Series", year=0x19, week=0x23):
     return bytes(s)
 
 
-SERIALS = {"A1": "101206FF", "A2": "00000000", "B1": "101206F0", "B2": "00000000"}
+SERIALS = {"A1": "1A2B3C4F", "A2": "00000000", "B1": "1A2B3C40", "B2": "00000000"}
 
 
 def spd_record(channel, dimm, spd, present=1):
@@ -198,7 +201,7 @@ def boot_info_data(dimm_like=False):
         o = 4 + 12 * i
         if dimm_like:
             if i in (0, 1, 2, 3):
-                struct.pack_into("<HHIB", d, o, 0xCE80, 0x0285, 0x101206F0 + i, 1)
+                struct.pack_into("<HHIB", d, o, 0xCE80, 0x0285, 0x1A2B3C40 + i, 1)
         else:
             struct.pack_into("<HHIB", d, o, 0x1234 + i, 0xBEEF, 0xA5A5A5A5, 0x5A)   # not DIMM-like (Zen2/3)
     t = 4 + 16 * 12
@@ -401,11 +404,11 @@ def test_mr_tables():
 
 
 def test_spd():
-    d = bm.decode_spd(spd_image("101206FF"))
+    d = bm.decode_spd(spd_image("1A2B3C4F"))
     j = d["jedec"]
     p1, p2 = d["xmp"]["profiles"]
     exp = [(d["part_number"], "4400 C19 Series"), (d["module_mfr"], "Patriot Memory (PDP Systems)"),
-           (d["dram_mfr"], "Samsung"), (d["mfg_date"], "2019 week 23"), (d["serial"], "101206FF"),
+           (d["dram_mfr"], "Samsung"), (d["mfg_date"], "2019 week 23"), (d["serial"], "1A2B3C4F"),
            (d["capacity_MB"], 8192), (d["ranks"], 1), (d["device_width"], 8), (d["die_density_Gb"], 8.0),
            (d["bank_groups"], 4), (d["crc_base_ok"], True), (d["crc_module_ok"], True), (j["speed_MTs"], 2133),
            (j["timings"], [15, 15, 15, 36, 51]), (j["tRFC1_ns"], 350.0), (j["CL_supported"], list(range(9, 17))),
@@ -419,7 +422,7 @@ def test_spd():
     lines = bm.spd_lines(d)
     check("SPD text has the XMP line", any("profile 1: DDR4-4400 19-19-19-39-58 (CL-RCD-RP-RAS-RC), tRFC1 770 (350 ns),"
                                            " 1.45 V" in x for x in lines), "\n".join(lines))
-    bad_crc = bytearray(spd_image("101206FF"))
+    bad_crc = bytearray(spd_image("1A2B3C4F"))
     bad_crc[5] ^= 1
     check("SPD CRC error detected", bm.decode_spd(bytes(bad_crc))["crc_base_ok"] is False)
     check("SPD of another type is not decoded", bm.decode_spd(bytes([0x23, 0x10, 0x12]) + bytes(509))["valid"] is False)
@@ -572,13 +575,14 @@ def main():
     efiv = os.path.join(SNAP, "raw", "efivars")
 
     # 1. offline: the first three sections must be byte-identical to the script before the additions
-    old = os.path.join(SNAP, "decoded", "taskc_test", "am4_bios_memcfg.before_taskC.py")
+    old = os.environ.get("CTUNE_MEMCFG_BEFORE")
     off_args = ["--ssdt", ssdt, "--region-file", region_file, "--apob-file", apob_file, "--pm-table", pmt]
     p_new, _ = run(off_args)
-    p_old = subprocess.run([sys.executable, "-I", old] + off_args, capture_output=True, text=True, timeout=60)
-    head = p_new.stdout.split("== APOB entries")[0]
-    check("offline: original sections byte-identical to the pre-change script", head == p_old.stdout and p_new.returncode == 0,
-          f"old {len(p_old.stdout)} new-head {len(head)}")
+    if old:
+        p_old = subprocess.run([sys.executable, "-I", old] + off_args, capture_output=True, text=True, timeout=60)
+        head = p_new.stdout.split("== APOB entries")[0]
+        check("offline: original sections byte-identical to the pre-change script",
+              head == p_old.stdout and p_new.returncode == 0, f"old {len(p_old.stdout)} new-head {len(head)}")
     open(os.path.join(a.outdir, "offline_run.txt"), "w").write(p_new.stdout + p_new.stderr)
     for s in ("Blk0 channel A P0: MEMCLK 1867 MHz (DDR4-3734), active", "MR0 2024: CL 14, WR 26 / RTP 13",
               "MR3 0008: 1/4 rate (gear-down on)", "MR6 101C: VrefDQ 78.20% of VDDQ (range 1, code 0x1C) = 1204 mV",
@@ -633,7 +637,7 @@ def main():
     check("NVS dumps equal the image ranges", rd("nvs_0a200000-0a20dfff.bin") == phys(0xA200000, 0xE000) and
           rd("nvs_bc9f2000-bd0d8fff.bin") == phys(0xBC9F2000, 0xBD0D9000 - 0xBC9F2000))
     check("apob_a200000.bin = planted APOB", rd("apob_a200000.bin") == sysd["apob"])
-    check("apob_spd_A1.bin = SPD image", rd("apob_spd_A1.bin") == spd_image("101206FF"))
+    check("apob_spd_A1.bin = SPD image", rd("apob_spd_A1.bin") == spd_image("1A2B3C4F"))
     j = json.load(open(os.path.join(dump, "bios_memcfg.json")))
     check("JSON: timing blocks with MR decode, SPD, easy, nvs, no errors",
           j["apob"]["timing_blocks"][0]["mr"]["RttPark"] == "RZQ/5 (48 ohm)" and len(j["apob"]["spd"]) == 4 and
