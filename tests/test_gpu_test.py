@@ -27,11 +27,13 @@ DEFAULTS = {k: p.default for k, p in inspect.signature(gpu.test).parameters.item
 class Defaults(unittest.TestCase):
     """The screen runs every part unless told otherwise, and the defaults live in one place (gpu.test)."""
 
-    def test_screen_runs_tensor_cores_transients_and_graphics_by_default(self):
-        from ctune.gpu import q2rtx
+    def test_screen_runs_tensor_cores_transients_graphics_and_raster_by_default(self):
+        from ctune.gpu import q2rtx, unigine
         self.assertGreaterEqual(DEFAULTS["tc_seconds"], burn.MIN_SECONDS["tc"])
         self.assertGreaterEqual(DEFAULTS["transient_seconds"], burn.MIN_SECONDS["transient"])
         self.assertGreaterEqual(DEFAULTS["graphics_seconds"], q2rtx.MIN_SECONDS)
+        self.assertGreaterEqual(DEFAULTS["raster_seconds"], unigine.SUPERPOSITION.min_seconds)
+        self.assertGreaterEqual(DEFAULTS["tessellation_seconds"], unigine.HEAVEN.min_seconds)
 
     def test_the_heat_and_noise_phase_runs_long_enough_to_settle(self):
         """FP64 is the only load at the lock below the 400 W cap, so it is where an undervolt shows as less heat and
@@ -390,7 +392,11 @@ class Graphics(unittest.TestCase):
         from ctune.core import stress
         with mock.patch.object(stress, "check_interrupted", side_effect=AssertionError("reached a real run")):
             for kind, kw in (("graphics", {"graphics_seconds": 0}), ("graphics", {"graphics_seconds": 20}),
-                             ("screen", {"graphics_seconds": -1}), ("vram", {"vram_seconds": 0}),
+                             ("screen", {"graphics_seconds": -1}), ("raster", {"raster_seconds": 0}),
+                             ("raster", {"raster_seconds": 20}), ("screen", {"raster_seconds": -1}),
+                             ("tessellation", {"tessellation_seconds": 0}),
+                             ("tessellation", {"tessellation_seconds": 120}),
+                             ("vram", {"vram_seconds": 0}),
                              ("vkpeak", {"core_runs": 0})):
                 with self.assertRaises(ValueError, msg=(kind, kw)):
                     gpu.test(kind, **kw)
@@ -423,6 +429,26 @@ class Graphics(unittest.TestCase):
         self.assertEqual(gpu._verdict(res, ["NVRM: Xid (PCI:0000:0a:00): 13, Graphics Exception"])[0], "red")
         self.assertEqual(gpu._verdict({"graphics": {"ok": True}}, [])[0], "green")
 
+    def test_raster_and_tessellation_count_like_graphics(self):
+        """Superposition and Heaven are judged the same way: missing is inconclusive, a crash is red."""
+        from ctune.gpu import unigine
+        for part, call in (("raster", gpu._raster), ("tessellation", gpu._tessellation)):
+            with mock.patch.object(unigine, "unavailable", return_value="run `ctune gpu unigine-setup` once"), \
+                    mock.patch.object(unigine, "run", side_effect=AssertionError("started")):
+                r = call(600, None)
+            res = {"core": {"fp32": {"ok": True}, "ok": True}, "graphics": {"ok": True}, part: r}
+            self.assertEqual(gpu._verdict(res, []), ("inconclusive", ["run `ctune gpu unigine-setup` once"]))
+            res[part] = {"ok": False, "unavailable": False, "errors": ["pass 2: exit 139: Segmentation fault"]}
+            self.assertEqual(gpu._verdict(res, [])[0], "red")
+
+    def test_each_bench_runs_in_its_own_part(self):
+        from ctune.gpu import unigine
+        with mock.patch.object(unigine, "unavailable", return_value=None), \
+                mock.patch.object(unigine, "run", return_value={"ok": True}) as run:
+            gpu._raster(300, None)
+            gpu._tessellation(300, None)
+        self.assertEqual([c.args[0] for c in run.call_args_list], [unigine.SUPERPOSITION, unigine.HEAVEN])
+
 
 class SignoffGpuPhase(unittest.TestCase):
     def test_every_part_runs_and_they_fill_the_phase(self):
@@ -436,7 +462,7 @@ class SignoffGpuPhase(unittest.TestCase):
         parts = {k: v for k, v in kw.items() if k.endswith("_seconds")}
         self.assertTrue(all(v > 0 for v in parts.values()), parts)
         for k in ("burn_seconds", "transient_seconds", "tc_seconds", "fp64_seconds", "graphics_seconds",
-                  "vram_seconds"):
+                  "raster_seconds", "tessellation_seconds", "vram_seconds"):
             self.assertIn(k, parts)
         self.assertAlmostEqual(sum(parts.values()), signoff.MINUTES["gpu"] * 60, delta=60)
 
