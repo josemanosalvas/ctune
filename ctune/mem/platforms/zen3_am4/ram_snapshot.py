@@ -40,6 +40,17 @@ PM_FIELDS = {
 }
 
 
+def clock_mode(fclk, uclk, mclk):
+    """Name the FCLK:UCLK:MCLK relation from the pm_table medians."""
+    if not (uclk and mclk):
+        return "clock mode unknown"
+    if abs(uclk - mclk) >= 5:
+        return "UCLK != MCLK (2:1)"
+    if fclk and abs(fclk - uclk) >= 5:
+        return "FCLK != UCLK (desync)"
+    return "1:1:1 coupled"
+
+
 def sh(cmd):
     try:
         return subprocess.run(cmd, capture_output=True, text=True, timeout=60).stdout
@@ -245,7 +256,7 @@ def render_md(s):
         g = lambda k: pf.get(k, {}).get("median")
         L.append(f"- FCLK / UCLK / MCLK: {fmt(g('FCLK_MHz'))} / {fmt(g('UCLK_MHz'))} / {fmt(g('MCLK_MHz'))} MHz "
                  f"(DPM0 {fmt(g('FCLK_DPM0_MHz'))}/{fmt(g('UCLK_DPM0_MHz'))}/{fmt(g('MCLK_DPM0_MHz'))}), "
-                 f"{'1:1:1 coupled' if g('UCLK_MHz') and g('MCLK_MHz') and abs(g('UCLK_MHz') - g('MCLK_MHz')) < 5 else 'UCLK != MCLK (2:1)'}")
+                 f"{clock_mode(g('FCLK_MHz'), g('UCLK_MHz'), g('MCLK_MHz'))}")
         L.append(f"- VSOC: set {fmt(g('VSOC_set_V'))} V, telemetry {fmt(g('VSOC_V'))} V (pm_table); "
                  f"SVI2 {s['umc']['decoded']['vsoc_svi2']['VSOC_V'] if s['umc']['decoded']['vsoc_svi2'] else '-'} V")
         L.append(f"- cLDO VDDP {fmt(g('CLDO_VDDP_V'))} V, VDDG IOD {fmt(g('VDDG_IOD_V'))} V, VDDG CCD "
