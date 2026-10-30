@@ -66,7 +66,7 @@ def build():
                                   "a GPU heat load")
     s.add_argument("kind", nargs="?", default="screen", choices=["screen", "fabric", "tm5"])
     s.add_argument("--minutes", type=float, help="default 25 (screen) or 90 plus 20 idle (fabric); for tm5 only a cap "
-                                                 "(default 240): it runs its 3 cycles to the end")
+                                                 "(default 240), because it runs its 3 cycles to the end")
     s.add_argument("--no-gpu-heat", action="store_true")
     s.add_argument("--mb", type=int, help="cap the RAM the test takes (default: free RAM minus 1.5 GB)")
     s.add_argument("--detach", action="store_true", help="run in the background; follow with `ctune test-status`")
@@ -142,7 +142,7 @@ def build():
                                             "password, through root-owned helpers and a polkit rule for this user (one prompt)")
     s.add_argument("--remove", action="store_true")
     s = sub.add_parser("signoff", help="multi-hour suite: ram, tm5, ycruncher, cpu, cpu_heavy, gpu, combined, idle "
-                                           "(about 5 h 30 min plus TM5)")
+                                       "(about 5 h 30 min plus TM5)")
     s.add_argument("--phases", help=f"comma-separated subset of {','.join(signoff.PHASES)}")
     s.add_argument("--minutes", help="per-phase overrides, for example ram=120,idle=60")
     s.add_argument("--keep-going", action="store_true", help="run every phase even after a red one")

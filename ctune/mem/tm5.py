@@ -1,17 +1,17 @@
-"""TestMem5 with the anta777 Extreme1 profile, the reference RAM test of the overclocking community, run under Proton.
+"""TestMem5 with the anta777 Extreme1 profile, run under Proton.
 
 - TM5 0.12 from its author's site (testmem.tz.ru), unpacked in the gitignored tools/tm5/ and never redistributed. The
   profile is extreme@anta777.cfg from integralfx/MemTestHelper at a pinned commit. Both have pinned SHA256 hashes.
 - TM5 is a 32-bit Windows program. It starts one worker process per logical CPU (Cores=0), and each worker tests its
   own "Testing Window Size" of locked memory, so no worker needs more than 4 GB and AWE never matters. The test loops
-  in MT0.dll are plain x86 code and run unchanged under Proton; only allocation and threads go through Wine.
+  in MT0.dll are plain x86 code and run unchanged under Proton. Only allocation and threads go through Wine.
 - umu-run (umu-launcher, Bazzite ships it) runs it with GE-Proton in its own prefix under ctune's data directory.
   It renders into gamescope's headless backend, as the Unigine loads do, so it needs no desktop session.
-- The whole tree runs in a transient systemd user scope with MemorySwapMax=0: Wine cannot pin pages the way Windows
-  does, and a tested page that sits in zram is not tested in the DIMMs. A scope that runs out of memory is killed
-  (an inconclusive run, not a red one). RuntimeMaxSec ends it if ctune dies. Stopping the scope stops every Wine
-  process, which a process group kill does not: wineserver starts them outside it.
-- ctune changes one value of the profile: the window per worker. It keeps anta777's 1408 MB when that fits in the
+- The whole tree runs in a transient systemd user scope with MemorySwapMax=0, because Wine cannot pin pages the way
+  Windows does, and a tested page that sits in zram is not tested in the DIMMs. systemd kills a scope that runs out
+  of memory, and that run is inconclusive, not red. RuntimeMaxSec ends it if ctune dies. Stopping the scope stops
+  every Wine process. A process group kill does not, because wineserver starts them outside the group.
+- ctune changes one value of the profile, the window per worker. It keeps anta777's 1408 MB when that fits in the
   free RAM and lowers it otherwise (the profile's own note says to fit it to the machine). Everything else, the test
   sequence, Time (%) 500 and 3 cycles, stays as published.
 - TM5 writes Log.txt next to TM5.exe and then waits in a dialog, so ctune reads the log and stops the scope at the
@@ -30,7 +30,7 @@ from ctune.core.paths import DATA, TOOLS
 VERSION = "0.12"
 URL = "https://testmem.tz.ru/tm5.rar"
 SHA256 = "2da16bd4a3990c4db524feecdb41d25884c37ab7891948b957c81109c442c2b0"
-# the site sends the wrong GlobalSign intermediate; curl gets the right one from the leaf's AIA URL and checks it
+# the site sends the wrong GlobalSign intermediate, so curl gets the right one from the leaf's AIA URL and checks it
 # against the system roots
 INTERMEDIATE_URL = "http://secure.globalsign.com/cacert/gsgccr6alphasslca2025.crt"
 CFG_COMMIT = "da422e50ec2170b578301fe9cc77f101143c38a7"
@@ -77,7 +77,7 @@ def profile_window_mb(text):
 
 def window_mb(mb, threads, cap):
     """The window per worker that fits mb of RAM over `threads` workers, in steps of the 16 MB lock granularity and
-    never above the profile's own window; 0 when even the minimum does not fit."""
+    never above the profile's own window, and 0 when even the minimum does not fit."""
     w = (mb // max(1, threads) - PER_PROCESS_MB) // 16 * 16
     w = min(cap, w)
     return w if w >= MIN_WINDOW_MB else 0
@@ -130,7 +130,7 @@ class Load(stress.Load):
         return self.window * self.threads
 
     def start(self):
-        if not self.window:   # result() reports it; the phase ends at once
+        if not self.window:   # result() reports it, and the phase ends at once
             return self
         for p in (LOG, os.path.join(DIR, "bin", "Cfg.link")):   # Cfg.link would point TM5 at a stale path
             if os.path.exists(p):
@@ -243,7 +243,8 @@ def setup():
         subprocess.run(["7z", "x", "-y", f"-o{ROOT}", rar], check=True, capture_output=True)
     else:
         raise RuntimeError("unrar or 7z is needed to unpack tm5.rar")
-    # umu-run '' creates the prefix and fetches Proton and its runtime once, then exits 1: it had nothing to start
+    # umu-run '' creates the prefix and fetches Proton and its runtime once, then exits 1 because it had nothing
+    # to start
     os.makedirs(PREFIX, exist_ok=True)
     env = dict(stress.user_env(), WINEPREFIX=PREFIX, GAMEID="umu-0", PROTONPATH=PROTON, WINEDEBUG="-all")
     r = subprocess.run(["umu-run", ""], env=env, timeout=1800, capture_output=True, text=True, errors="replace")

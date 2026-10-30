@@ -5,7 +5,7 @@ DIMMs.
   fabric  (FCLK steps and after a BIOS flash, 90 min, then 20 min idle): the screen with NVMe reads, then an idle
           soak, because an unstable fabric often reboots the machine at idle.
   tm5     (the timings pass): TestMem5 with the anta777 Extreme1 profile, its 3 cycles to the end, with the same GPU
-          heat load. It runs as long as TM5 needs; minutes only caps it (ctune.mem.tm5).
+          heat load. It runs as long as TM5 needs, and minutes only caps it (ctune.mem.tm5).
 
 The test is red on stressapptest or TM5 errors or hardware incidents, any new corrected machine-check error (umc
 banks point at the memory, fabric banks at FCLK, VDDG or VSOC), a VRAM or Xid error from the heat load, or a crash
@@ -95,7 +95,7 @@ def test(kind="screen", minutes=None, gpu_heat=True, note="", record=True, mb=No
     res["red_sources"] = [l["name"] for l in res["loads"] if not l["ok"]] + list(res["errors"]["by_subsystem"])
     if res["verdict"] == "red" and res["errors"]["clean"] and all(
             l.get("unavailable") for l in res["loads"] if not l["ok"]):
-        res["verdict"], res["red_sources"] = "inconclusive", []   # it never tested: the setup, not the RAM
+        res["verdict"], res["red_sources"] = "inconclusive", []   # it never tested, so the setup failed, not the RAM
     if res["errors"]["kernel_hw_errors"]:
         res["red_sources"].append("kernel hardware-error lines")
     if res["coverage_pct"] < 70:

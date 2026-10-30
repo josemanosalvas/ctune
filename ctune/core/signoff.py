@@ -3,7 +3,7 @@
 Phases, in order (minutes are defaults):
   ram       60  stressapptest -W over the free RAM, memtest_vulkan heating the case
   tm5      240  TestMem5 with the anta777 Extreme1 profile, its 3 cycles to the end (the minutes only cap it), with
-              the same heat load; inconclusive when it cannot start or runs out of memory
+              the same heat load, and inconclusive when it cannot start or runs out of memory
   ycruncher 45  y-cruncher stress, all tests on all threads with most of the free RAM (AVX2, IMC, VRM load)
   cpu       50  mprime SSE Huge FFTs, one thread per core in random order, suspended 1 s in 10 (Curve Optimizer)
   cpu_heavy 25  mprime AVX2 1344K, the heavy-load counterpart
