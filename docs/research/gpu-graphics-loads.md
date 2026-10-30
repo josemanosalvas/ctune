@@ -1,14 +1,25 @@
-# Graphics and ray-tracing loads: Unigine Superposition, Quake II RTX
+# Graphics, raster and ray-tracing loads: Quake II RTX, Unigine Superposition and Heaven
 
 This note draws on web pages, source files, test profiles and the first bytes of each archive. Each fact below has its source, and "unconfirmed" means no primary source was found. The Decision section adds what the downloads and example runs on an RTX 3080 Ti under Bazzite (Fedora 44) showed. The Open list has the questions that remain.
 
 ## Decision
-ctune uses Quake II RTX, not Superposition, as the graphics part of the sign-off's gpu phase (`ctune/gpu/q2rtx.py`):
-- Q2RTX loads the RT cores. Superposition on Linux uses only OpenGL raster rendering.
-- Q2RTX has no licence question. Whether a script may drive Superposition Basic is unclear, and only Unigine can settle it.
-- Q2RTX reports a lost device itself (`Device lost!`, exit 1).
+ctune runs three graphics loads in the screen and the sign-off's gpu phase, because each loads hardware the others leave idle:
+- `graphics`: Quake II RTX (`ctune/gpu/q2rtx.py`) loads the RT cores. It traces even its primary rays, so it barely touches the ROPs. It has no licence question, and it reports a lost device itself (`Device lost!`, exit 1).
+- `raster`: Unigine Superposition 1.1 (`ctune/gpu/unigine.py`) rasterises every frame through OpenGL 4.5 with heavy shading and post-processing: shaders, texture units and ROPs.
+- `tessellation`: Unigine Heaven 4.0 (same module) at its Extreme preset: extreme tessellation (geometry units) and 8x MSAA (ROPs).
 
-Neither checks what it renders, so gpu-burn remains the test of correct results, and Q2RTX is red only on a crash, a lost device, a hang or an Xid error.
+The Unigine licence question below stays open. ctune drives the Basic editions through their engine binaries, as PTS does, for personal use, and never redistributes them.
+
+None of the three checks what it renders, so gpu-burn remains the test of correct results, and each graphics part is red only on a crash, a lost device, a missing result, a hang or an Xid error.
+
+Checked for the Unigine loads on Bazzite (Fedora 44), on an RTX 3080 Ti at a 1905 MHz lock, a +55 MHz offset and a 330 W limit:
+- Both `.run` files match the FreeBSD ports' SHA256 and size: Superposition 1.1 at 1,642,169,125 bytes, Heaven 4.0 at 286,332,610 bytes (PTS still lists Heaven at 286,329,188 bytes, an older packing).
+- Both Makeself payloads match their archive's own MD5 field when read past the header (588 lines for Superposition, 589 for Heaven) with nothing executed. Superposition's `postinstall.sh` only writes desktop entries and icons, so skipping it loses nothing. Heaven's script is `echo`.
+- Every library of `bin/superposition` and `bin/heaven_x64` resolves on the host with `LD_LIBRARY_PATH` set to their `bin/` (and `bin/x64/` for Heaven). No runtime container is needed.
+- Both run headless in `gamescope --backend headless` through its Xwayland, with no window on the desktop.
+- **Superposition** with the PTS arguments works unchanged on 1.1 (`-mode 2 -preset 0` runs the benchmark once and quits). At 2560×1440, `-shaders_quality 3 -textures_quality 2` (Extreme shaders, high textures) one pass took 197 s with loading, scored 7164 (53.6 FPS, min 44.3, max 61.7) and ran at the 330 W cap at 1785 to 1800 MHz, 78 °C. The score file is `$HOME/.Superposition/automation/log-<date>_<time>.txt`. With `-sound_app openal` and no sound device the engine printed about 9,500 `OpenAL error: invalid value` lines per pass; `-sound_app null` is used.
+- **Heaven** with the PTS arguments and the `PHORONIX` define runs the benchmark once (260 s), prints `Time:`, `Frames:` and `FPS:` and quits. The launcher's Extreme preset is the defines `QUALITY_ULTRA,TESSELLATION_EXTREME` with `-video_multisample 3` (`data/launcher/js/browser.js`). At 2560×1440 with them one pass took 269 s and ran at 150 FPS at the 330 W cap at about 1840 MHz, 79 °C; with no quality defines it ran at 247 FPS, also at the cap.
+  - Heaven has no `config_readonly` and rewrites its engine config at exit. It resolves every path from `bin/`, so an absolute `-engine_config` fails; a path relative to `bin/` works, so ctune copies the shipped config into its data directory before each pass.
 
 Checked on Bazzite (Fedora 44), without running it:
 - The tarball's SHA256 matches.

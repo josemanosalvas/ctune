@@ -17,13 +17,13 @@ and the kernel log remain the main signal. Sources: docs/research/gpu-graphics-l
 import os
 import re
 import shutil
-import signal
 import statistics
 import subprocess
 import time
 
 from ctune.core import stress
 from ctune.core.paths import TOOLS
+from ctune.gpu import passes
 
 VERSION = "1.8.1"
 URL = f"https://github.com/NVIDIA/Q2RTX/releases/download/v{VERSION}/q2rtx-{VERSION}-linux.tar.gz"
@@ -109,44 +109,9 @@ def _pass(argv, home, timeout_s, guard):
     except OSError:
         pass
     env = dict(stress.user_env(), XDG_DATA_HOME=home)   # its config and logs stay out of the user's own Q2RTX data
-    t0 = time.monotonic()
-    with open(os.path.join(home, "pass.out"), "w") as out:   # gamescope's and the runtime's own messages
-        p = subprocess.Popen(argv, stdin=subprocess.DEVNULL, stdout=out, stderr=subprocess.STDOUT,
-                             cwd=DIR if os.path.isdir(DIR) else None, env=env, start_new_session=True)
-    why = None
-    try:
-        while p.poll() is None:
-            if time.monotonic() - t0 > timeout_s:
-                why = "timeout"
-                break
-            why = guard() if guard else None
-            if why:
-                break
-            time.sleep(0.2)
-    finally:   # also on a stop (KeyboardInterrupt): SIGTERM, then SIGKILL, because a modal dialog ignores SIGTERM
-        old = signal.pthread_sigmask(signal.SIG_BLOCK, {signal.SIGINT})   # a second Ctrl-C must not leave it running
-        try:
-            for sig, wait in ((signal.SIGTERM, TERM_GRACE_S), (signal.SIGKILL, 10)):
-                if p.poll() is not None:
-                    break
-                try:
-                    os.killpg(p.pid, sig)
-                    p.wait(wait)
-                except ProcessLookupError:
-                    break
-                except subprocess.TimeoutExpired:
-                    continue
-        finally:
-            signal.pthread_sigmask(signal.SIG_SETMASK, old)
-    return p.returncode, _read(log), time.monotonic() - t0, why
-
-
-def _read(path):
-    try:
-        with open(path, errors="replace") as f:
-            return f.read()
-    except OSError:
-        return ""
+    # pass.out holds gamescope's and the runtime's own messages
+    rc, took, why = passes.run(argv, env, DIR, os.path.join(home, "pass.out"), timeout_s, guard, TERM_GRACE_S)
+    return rc, passes.read(log), took, why
 
 
 def run(seconds, home, guard=None, make_argv=None, pass_timeout_s=PASS_TIMEOUT_S, min_pass_s=30):
@@ -178,7 +143,7 @@ def run(seconds, home, guard=None, make_argv=None, pass_timeout_s=PASS_TIMEOUT_S
             elif r["errors"] or rc != 0 or r["fps"] is None:
                 if n == 1 and not r["errors"] and (r["environment"] or not r["api"]):
                     unavail = True   # never rendered a frame: the setup, not the GPU
-                tail = (text.strip() or _read(os.path.join(home, "pass.out")).strip())[-300:] or "no output"
+                tail = (text.strip() or passes.read(os.path.join(home, "pass.out")).strip())[-300:] or "no output"
                 errors.append(f"pass {n}: exit {rc}: " + "; ".join(r["errors"] or r["environment"] or
                                                                       [f"no FPS line ({tail})"]))
             else:

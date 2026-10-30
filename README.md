@@ -39,7 +39,8 @@ bin/ctune gpu status                     # clocks, offsets, power, and what limi
 bin/ctune gpu apply --max-clock 1860 --core-offset 150   # asks for root; lasts until reboot
 bin/ctune gpu burn-setup                 # once: build the gpu-burn image (podman, about 4 GB download)
 bin/ctune gpu q2rtx-setup                # once: Quake II RTX and the Steam runtime it runs in (about 1.3 GB)
-bin/ctune gpu test screen                # about 36 min: gpu-burn, Quake II RTX, memtest_vulkan; green, red or inconclusive
+bin/ctune gpu unigine-setup              # once: Unigine Superposition and Heaven, the raster loads (about 1.9 GB)
+bin/ctune gpu test screen                # about 44 min: gpu-burn, Quake II RTX, Superposition, Heaven, memtest_vulkan
 bin/ctune gpu reset
 bin/ctune gpu persist --dry-run          # after a green sign-off: re-apply these settings at every boot
 bin/ctune errors                         # corrected machine-check errors by bank and subsystem
@@ -47,7 +48,7 @@ bin/ctune signoff --detach               # about 5 h 30 min: ram, ycruncher, cpu
 bin/ctune test-status                    # the running test and its phase, or the last result
 bin/ctune test-stop                      # stop the running detached test
 ```
-Agents get the same commands from an MCP server (`ctune/mcp_server.py`, standard library only). The server leaves out the one-time setup commands `gpu burn-setup`, `gpu q2rtx-setup`, `gpu persist-setup`, `gpu persist-selftest` and `boot-check`. `.mcp.json` registers the server for this project. It starts the server from `$CLAUDE_PROJECT_DIR`, which Claude Code sets to the project root, so it needs no local path. To register it elsewhere, run `claude mcp add ctune -- python3 -I <repo>/ctune/mcp_server.py`. The campaign skill and its references are in `.claude/skills/ctune/`. The agent keeps the machine's own facts and history in `data/this-machine.md`, which it creates from `.claude/skills/ctune/reference/this-machine.template.md`.
+Agents get the same commands from an MCP server (`ctune/mcp_server.py`, standard library only). The server leaves out the one-time setup commands `gpu burn-setup`, `gpu q2rtx-setup`, `gpu unigine-setup`, `gpu persist-setup`, `gpu persist-selftest` and `boot-check`. `.mcp.json` registers the server for this project. It starts the server from `$CLAUDE_PROJECT_DIR`, which Claude Code sets to the project root, so it needs no local path. To register it elsewhere, run `claude mcp add ctune -- python3 -I <repo>/ctune/mcp_server.py`. The campaign skill and its references are in `.claude/skills/ctune/`. The agent keeps the machine's own facts and history in `data/this-machine.md`, which it creates from `.claude/skills/ctune/reference/this-machine.template.md`.
 
 ## Layout
 - `ctune/core/`: the journal, machine-check counters, sensors, paths, the shared test runner (`stress.py`), the sign-off suite and the detached runner.
@@ -64,6 +65,7 @@ Agents get the same commands from an MCP server (`ctune/mcp_server.py`, standard
   - The gpu-burn source at a pinned commit. `ctune gpu burn-setup` builds the image.
   - nvidia_oc 0.1.24, built from a pinned commit by `ctune gpu persist-setup`.
   - Quake II RTX 1.8.1 and the Steam Linux Runtime sniper it runs in, installed by `ctune gpu q2rtx-setup` with pinned SHA256 hashes.
+  - Unigine Superposition 1.1 and Heaven 4.0, the free Basic editions, installed by `ctune gpu unigine-setup` with pinned SHA256 hashes. Their EULA allows personal use only and forbids redistribution, so never commit them.
 - `ctune/mascot.py`: the mascot as pixel sprites, and the banner `ctune status` prints in a terminal.
 - `docs/brand/`: the logo, wordmark, icons, animation and social preview. `python3 docs/brand/build.py` regenerates them from `ctune/mascot.py` and needs Pillow.
 - `docs/`: the design notes and the research notes with their sources. `design.md` covers GPU persistence, the passwordless root path, crash evidence and the BIOS decoder.

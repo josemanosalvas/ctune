@@ -82,14 +82,18 @@ def build():
     s.add_argument("--max-clock", type=int, help="lock the core clock to the range 0 to MHZ")
     s.add_argument("--power-limit", type=float, help="watts")
     g.add_parser("reset", help="offsets 0, unlock clocks, default power limit")
-    s = g.add_parser("test", help="core (gpu-burn, results checked), graphics (Quake II RTX), vram (memtest_vulkan), "
-                                  "screen (all three), vkpeak; the defaults are gpu.test's")
+    s = g.add_parser("test", help="core (gpu-burn, results checked), graphics (Quake II RTX), raster (Unigine "
+                                  "Superposition), tessellation (Unigine Heaven), vram (memtest_vulkan), screen "
+                                  "(all five), vkpeak; the defaults are gpu.test's")
     s.add_argument("kind", nargs="?", default=argparse.SUPPRESS, choices=list(gpu.KINDS))
     for flag, what in (("--burn-seconds", "gpu-burn FP32 (results checked)"),
                        ("--fp64-seconds", "gpu-burn FP64 (at least 90 s): low power, expected to run at the locked clock"),
                        ("--tc-seconds", "gpu-burn on the tensor cores"),
                        ("--transient-seconds", "gpu-burn FP32 frozen 1 s in every 10: load transients"),
                        ("--graphics-seconds", "Quake II RTX timedemo passes: RT cores; crashes and hangs only"),
+                       ("--raster-seconds", "Unigine Superposition passes: raster and ROPs; crashes and hangs only"),
+                       ("--tessellation-seconds", "Unigine Heaven passes: extreme tessellation, 8x MSAA; crashes "
+                                                  "and hangs only"),
                        ("--vram-seconds", "memtest_vulkan"), ("--core-runs", "vkpeak runs (kind vkpeak)")):
         s.add_argument(flag, type=int, default=argparse.SUPPRESS, help=what + "; 0 skips it")
     s.add_argument("--detach", action="store_true")
@@ -97,6 +101,9 @@ def build():
     g.add_parser("burn-setup", help="build the gpu-burn image (podman, pinned commit, about 4 GB download once)")
     g.add_parser("q2rtx-setup", help="download Quake II RTX and the Steam Linux Runtime it runs in (about 1.3 GB "
                                      "once, SHA256 pinned)")
+    g.add_parser("unigine-setup", help="download Unigine Superposition 1.1 and Heaven 4.0 for the raster and "
+                                       "tessellation parts (about 1.9 GB once, SHA256 pinned; free Basic editions, "
+                                       "personal use)")
     s = g.add_parser("persist", help="re-apply the settings applied now at every boot, if a green sign-off covers "
                                      "them (root through pkexec)")
     s.add_argument("--dry-run", action="store_true", help="show the config or the reasons it is refused")
@@ -217,6 +224,9 @@ def main(argv=None):
         elif a.gcmd == "q2rtx-setup":
             from ctune.gpu import q2rtx
             _out(q2rtx.setup())
+        elif a.gcmd == "unigine-setup":
+            from ctune.gpu import unigine
+            _out(unigine.setup())
         elif a.gcmd == "xid":
             _out(gpu.xid_errors(a.since))
         elif a.gcmd in ("persist", "unpersist", "persist-setup", "persist-selftest"):

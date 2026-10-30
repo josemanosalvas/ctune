@@ -108,8 +108,12 @@ TOOLS = {
                  "120), then FP32 frozen 1 s in every 10 for transient_seconds (default 180), so the load keeps "
                  "stepping between idle and full at the top clock. graphics runs Quake II RTX headless for "
                  "graphics_seconds (default 300). It loads the RT cores at the lock at high power, but nothing it "
-                 "renders is checked, so it is red only on a crash, a lost device, a hang or an Xid error. vram runs "
-                 "memtest_vulkan. screen runs core, graphics and vram (about 36 min, detached by default; poll "
+                 "renders is checked, so it is red only on a crash, a lost device, a hang or an Xid error. raster "
+                 "runs Unigine Superposition headless for raster_seconds (default 300): OpenGL raster, the ROPs and "
+                 "texture units, the load closest to most games. tessellation runs Unigine Heaven for "
+                 "tessellation_seconds (default 300) at extreme tessellation and 8x MSAA. Neither checks what it "
+                 "draws. vram runs memtest_vulkan. screen runs core, graphics, raster, tessellation and vram (about "
+                 "44 min, detached by default; poll "
                  "test_status). vkpeak gives only the old throughput score. 0 seconds skips a part. The test stops at "
                  "83 °C. It returns the verdict (green, red or inconclusive), Gflop/s, clock_stretch (GFLOPS per MHz "
                  "against the last green result at the same lock), per-part at_lock_share, power, temperature and fan "
@@ -117,7 +121,9 @@ TOOLS = {
                  _obj({"kind": {"type": "string", "enum": list(gpu.KINDS)},
                        "burn_seconds": {"type": "integer"}, "fp64_seconds": {"type": "integer"},
                        "tc_seconds": {"type": "integer"}, "transient_seconds": {"type": "integer"},
-                       "graphics_seconds": {"type": "integer"}, "vram_seconds": {"type": "integer"},
+                       "graphics_seconds": {"type": "integer"}, "raster_seconds": {"type": "integer"},
+                       "tessellation_seconds": {"type": "integer"},
+                       "vram_seconds": {"type": "integer"},
                        "core_runs": {"type": "integer"}, "detach": {"type": "boolean"}, "note": S}),
                  # the defaults live in gpu.test only
                  lambda a: _run("gpu_test", gpu.test, a.get("detach", True),

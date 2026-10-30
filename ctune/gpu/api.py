@@ -10,7 +10,7 @@ import time
 
 from ctune.core import journal, stress
 from ctune.core.paths import DATA, TOOLS
-from ctune.gpu import burn, nvml, q2rtx
+from ctune.gpu import burn, nvml, q2rtx, unigine
 
 STATE = os.path.join(DATA, "gpu_state.json")
 HELPER = os.path.join(os.path.dirname(os.path.abspath(__file__)), "apply.py")
@@ -163,7 +163,7 @@ SETTLED_S = 60   # temp_c_end and fan_pct_end average a part's last 60 samples (
 
 class _Sampler(threading.Thread):
     """NVML telemetry once a second during a test, tagged with the running part (fp32, fp64, tc, transient,
-    graphics, vram, vkpeak; transient:paused while a transient run is frozen)."""
+    graphics, raster, tessellation, vram, vkpeak; transient:paused while a transient run is frozen)."""
 
     def __init__(self):
         super().__init__(daemon=True)
@@ -362,10 +362,27 @@ def _graphics(seconds, h):
     return q2rtx.run(seconds, os.path.join(DATA, "q2rtx"), guard=lambda: _temp_guard(h))
 
 
+def _unigine(bench, seconds, h):
+    """Unigine benchmark passes (OpenGL raster: shaders, texture units, ROPs; Heaven also extreme tessellation): red
+    on a crash, a missing result or a hang, and inconclusive when it cannot run on this machine."""
+    why = unigine.unavailable(bench)
+    if why:
+        return {"ok": False, "unavailable": True, "errors": [why]}
+    return unigine.run(bench, seconds, os.path.join(DATA, bench.key), guard=lambda: _temp_guard(h))
+
+
+def _raster(seconds, h):
+    return _unigine(unigine.SUPERPOSITION, seconds, h)
+
+
+def _tessellation(seconds, h):
+    return _unigine(unigine.HEAVEN, seconds, h)
+
+
 def _parts(res):
-    """Every part that ran: the gpu-burn modes, then graphics, vram and vkpeak."""
+    """Every part that ran: the gpu-burn modes, then graphics, raster, tessellation, vram and vkpeak."""
     return [v for k, v in res.get("core", {}).items() if k != "ok"] + \
-        [res[k] for k in ("graphics", "vram", "vkpeak") if k in res]
+        [res[k] for k in ("graphics", "raster", "tessellation", "vram", "vkpeak") if k in res]
 
 
 def _verdict(res, new_xid):
@@ -457,32 +474,43 @@ def clock_stretch(res, records):
             "stretched": [m for m, v in parts.items() if v["change_pct"] < -STRETCH_PCT]}
 
 
-KINDS = ("core", "vram", "screen", "graphics", "vkpeak")
+KINDS = ("core", "vram", "screen", "graphics", "raster", "tessellation", "vkpeak")
 
 
 def test(kind="screen", burn_seconds=600, fp64_seconds=600, tc_seconds=120, transient_seconds=180,
-         graphics_seconds=300, vram_seconds=300, core_runs=3, budget_bytes=None, note="", record=True):
+         graphics_seconds=300, raster_seconds=300, tessellation_seconds=300, vram_seconds=300, core_runs=3,
+         budget_bytes=None, note="", record=True):
     """kind: 'core' (gpu-burn, every result checked: FP32 SGEMM, then FP64, tensor cores, and FP32 frozen 1 s in
     every 10 for load transients, each run when its seconds are above 0), 'graphics' (Quake II RTX: RT cores and
-    the lock at high power; nothing checked but crashes, lost devices and hangs), 'vram' (memtest_vulkan), 'screen'
-    (core, then
-    graphics, then vram), or 'vkpeak' (throughput score only, nothing checked).
+    the lock at high power; nothing checked but crashes, lost devices and hangs), 'raster' (Unigine Superposition:
+    OpenGL raster, ROPs and texture units), 'tessellation' (Unigine Heaven at extreme tessellation and 8x MSAA; both
+    also check nothing but crashes and hangs), 'vram' (memtest_vulkan), 'screen' (core, then graphics, raster,
+    tessellation and vram), or 'vkpeak' (throughput score only, nothing checked).
     Green means every part passed, no new Xid errors, the temperature guardrail not hit, and no crash."""
     if kind not in KINDS:
         raise ValueError(f"kind is one of {', '.join(KINDS)}")
     durations = {"fp32": burn_seconds, "fp64": fp64_seconds, "tc": tc_seconds, "transient": transient_seconds}
-    if kind == "graphics":
+    if kind in ("graphics", "raster", "tessellation"):
         durations = dict.fromkeys(durations, 0)
-    if any(v < 0 for v in durations.values()) or vram_seconds < 0 or graphics_seconds < 0:
+    if any(v < 0 for v in durations.values()) or \
+            min(vram_seconds, graphics_seconds, raster_seconds, tessellation_seconds) < 0:
         raise ValueError("durations cannot be negative")
     if kind == "graphics" and not graphics_seconds:
         raise ValueError("kind graphics needs graphics_seconds above 0")
+    if kind == "raster" and not raster_seconds:
+        raise ValueError("kind raster needs raster_seconds above 0")
+    if kind == "tessellation" and not tessellation_seconds:
+        raise ValueError("kind tessellation needs tessellation_seconds above 0")
     if kind == "vram" and not vram_seconds:
         raise ValueError("kind vram needs vram_seconds above 0")
     if kind == "vkpeak" and core_runs < 1:
         raise ValueError("kind vkpeak needs core_runs of 1 or more")
     if 0 < graphics_seconds < q2rtx.MIN_SECONDS:
         raise ValueError(f"graphics_seconds {graphics_seconds} is below {q2rtx.MIN_SECONDS}: not one full pass")
+    for name, secs, bench in (("raster", raster_seconds, unigine.SUPERPOSITION),
+                              ("tessellation", tessellation_seconds, unigine.HEAVEN)):
+        if 0 < secs < bench.min_seconds:
+            raise ValueError(f"{name}_seconds {secs} is below {bench.min_seconds}: not one full pass")
     if kind in ("core", "screen"):
         if not any(durations.values()):
             raise ValueError("core and screen need at least one gpu-burn duration above 0")
@@ -529,9 +557,24 @@ def test(kind="screen", burn_seconds=600, fp64_seconds=600, tc_seconds=120, tran
                 res["graphics"] = _graphics(graphics_seconds, h)
                 res["graphics"]["telemetry"] = _part_telemetry(sampler, "graphics", max_clock)
             # a red part ends the test; a part that could not run (no game) does not skip the next one
+            passed = lambda part: part["ok"] or part.get("unavailable")   # noqa: E731
             graphics = res.get("graphics", {"ok": True})
+            if raster_seconds and kind in ("screen", "raster") and res.get("core", {}).get("ok", True) and \
+                    passed(graphics):
+                run.update(phase="raster")
+                sampler.part = "raster"
+                res["raster"] = _raster(raster_seconds, h)
+                res["raster"]["telemetry"] = _part_telemetry(sampler, "raster", max_clock)
+            raster = res.get("raster", {"ok": True})
+            if tessellation_seconds and kind in ("screen", "tessellation") and res.get("core", {}).get("ok", True) \
+                    and passed(graphics) and passed(raster):
+                run.update(phase="tessellation")
+                sampler.part = "tessellation"
+                res["tessellation"] = _tessellation(tessellation_seconds, h)
+                res["tessellation"]["telemetry"] = _part_telemetry(sampler, "tessellation", max_clock)
+            tessellation = res.get("tessellation", {"ok": True})
             if kind in ("vram", "screen") and vram_seconds and res.get("core", {}).get("ok", True) and \
-                    (graphics["ok"] or graphics.get("unavailable")):
+                    passed(graphics) and passed(raster) and passed(tessellation):
                 run.update(phase="vram")
                 sampler.part = "vram"
                 res["vram"] = _vram(vram_seconds, budget_bytes)
