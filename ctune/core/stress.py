@@ -370,6 +370,7 @@ class Load:
         self.name, self.cmd, self.parse, self.cwd, self.stop_signal = name, cmd, parse, cwd, stop_signal
         self.self_timed = self_timed   # ends by itself at the end of the phase (stressapptest -s)
         self.optional = optional       # a helper load (GPU heat): if it cannot start, the phase goes on without it
+        self.ends_phase = False        # a fixed-work load (TM5) ends the phase by exiting; the phase's seconds cap it
         self.proc, self.stopped, self.out = None, False, ""
 
     def start(self):
@@ -426,21 +427,26 @@ class Load:
 
 def run_loads(loads, seconds, check_every=5, on_tick=None):
     """Start the loads, wait `seconds`, then stop them and return their results. A load that exits early ends the
-    phase: its result says why, and the others are stopped."""
+    phase: its result says why, and the others are stopped. A load with ends_phase ends the phase by exiting, and that
+    exit is not early. Its own result says whether it finished."""
     t0 = time.time()
-    early = None
+    early = done = None
     try:
         for ld in loads:
             ld.start()
         t_end = t0 + seconds
-        while time.time() < t_end and not early:
+        while time.time() < t_end and not early and not done:
             time.sleep(min(check_every, max(0, t_end - time.time())))
             why = on_tick() if on_tick else None   # a guardrail can end the phase, for example a temperature limit
             if why:
                 early = early or why
             for ld in loads:
                 margin = 20 if getattr(ld, "self_timed", False) else 0
-                if not ld.alive() and time.time() < t_end - margin and not getattr(ld, "optional", False):
+                if ld.alive() or getattr(ld, "optional", False):
+                    continue
+                if getattr(ld, "ends_phase", False):
+                    done = ld.name
+                elif time.time() < t_end - margin:
                     early = early or ld.name
         for ld in loads:   # self-timed loads print their summary after their own timer: give them time to finish
             if getattr(ld, "self_timed", False) and not early:

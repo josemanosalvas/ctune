@@ -76,9 +76,12 @@ TOOLS = {
     "mem_test": ("RAM stability test, recorded in the journal. screen (25 min) runs stressapptest -W over the free RAM "
                  "while memtest_vulkan heats the case. fabric (90 min, then 20 min idle) runs the screen with NVMe "
                  "reads, then an idle soak, for FCLK steps and after a BIOS flash. It runs detached by default, so poll "
-                 "test_status. The verdict is red on stressapptest errors, new corrected machine-check errors (umc "
-                 "points at memory, fabric at FCLK, VDDG or VSOC), VRAM or Xid errors, or a crash.",
-                 _obj({"kind": {"type": "string", "enum": ["screen", "fabric"]}, "minutes": {"type": "number"},
+                 "test_status. tm5 runs TestMem5 with the anta777 Extreme1 profile under Proton, with the same GPU heat "
+                 "load. It runs its 3 cycles as long as they take, and minutes only caps it (default 240). It needs "
+                 "`ctune mem tm5-setup` once and is inconclusive when it cannot start or runs out of memory. The "
+                 "verdict is red on stressapptest or TM5 errors, new corrected machine-check errors (umc points at "
+                 "memory, fabric at FCLK, VDDG or VSOC), VRAM or Xid errors, or a crash.",
+                 _obj({"kind": {"type": "string", "enum": ["screen", "fabric", "tm5"]}, "minutes": {"type": "number"},
                        "gpu_heat": {"type": "boolean"}, "detach": {"type": "boolean"}, "note": S}),
                  lambda a: _run("mem_test", memtest.test, a.get("detach", True), kind=a.get("kind", "screen"),
                                 minutes=a.get("minutes"), gpu_heat=a.get("gpu_heat", True), note=a.get("note", ""))),
@@ -178,10 +181,11 @@ TOOLS = {
                                 note=a.get("note", ""))),
     # suite
     "signoff": ("Multi-hour sign-off that ends a campaign, against every domain's current settings: ram (60 min), "
-                "ycruncher (45), cpu per-core cycle (about 50), gpu (90, including Quake II RTX), combined RAM, GPU "
-                "and NVMe load (30), idle (30). cpu_heavy (25) runs mprime AVX2 per core after the SSE cpu phase. It "
-                "stops at the first red phase unless keep_going is set. It always runs detached, so poll test_status, "
-                "and the result goes into the journal. minutes overrides the length per phase, for example "
+                "tm5 (TestMem5 anta777 Extreme1, 3 cycles, capped at 240), ycruncher (45), cpu per-core cycle "
+                "(about 50), gpu (90, including Quake II RTX), combined RAM, GPU and NVMe load (30), idle (30). "
+                "cpu_heavy (25) runs mprime AVX2 per core after the SSE cpu phase. It stops at the first red phase "
+                "unless keep_going is set. It always runs detached, so poll test_status, and the result goes into the "
+                "journal. minutes overrides the length per phase, for example "
                 "{\"ram\": 120}.",
                 _obj({"phases": {"type": "array", "items": {"type": "string", "enum": list(signoff.PHASES)}},
                       "minutes": {"type": "object"}, "keep_going": {"type": "boolean"}, "note": S}),

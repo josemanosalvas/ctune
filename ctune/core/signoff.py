@@ -2,6 +2,8 @@
 
 Phases, in order (minutes are defaults):
   ram       60  stressapptest -W over the free RAM, memtest_vulkan heating the case
+  tm5      240  TestMem5 with the anta777 Extreme1 profile, its 3 cycles to the end (the minutes only cap it), with
+              the same heat load, and inconclusive when it cannot start or runs out of memory
   ycruncher 45  y-cruncher stress, all tests on all threads with most of the free RAM (AVX2, IMC, VRM load)
   cpu       50  mprime SSE Huge FFTs, one thread per core in random order, suspended 1 s in 10 (Curve Optimizer)
   cpu_heavy 25  mprime AVX2 1344K, the heavy-load counterpart
@@ -20,8 +22,8 @@ import time
 from ctune.core import journal, stress
 from ctune.core.paths import DATA
 
-PHASES = ("ram", "ycruncher", "cpu", "cpu_heavy", "gpu", "combined", "idle")
-MINUTES = {"ram": 60, "ycruncher": 45, "cpu": 50, "cpu_heavy": 25, "gpu": 90, "combined": 30, "idle": 30}
+PHASES = ("ram", "tm5", "ycruncher", "cpu", "cpu_heavy", "gpu", "combined", "idle")
+MINUTES = {"ram": 60, "tm5": 240, "ycruncher": 45, "cpu": 50, "cpu_heavy": 25, "gpu": 90, "combined": 30, "idle": 30}
 # gpu phase: maps each gpu.test argument to (share of the phase, floor in s)
 GPU_SHARES = {"burn_seconds": (0.28, 60), "fp64_seconds": (0.12, 90), "tc_seconds": (0.07, 30),
               "transient_seconds": (0.11, 60), "graphics_seconds": (0.13, 60), "raster_seconds": (0.13, 150),
@@ -74,6 +76,16 @@ def _phase(name, minutes, mb_cap=None):
         loads, notes = memtest.ram_loads(seconds, mb)
         r = _loads_phase(loads, seconds, notes)
         r["tested_mb"] = mb
+        return r
+    if name == "tm5":
+        from ctune.mem import test as memtest, tm5
+        if tm5.unavailable():
+            return {"ok": False, "inconclusive": True, "errors": [tm5.unavailable()]}
+        loads, notes = memtest.ram_loads(seconds, cap(stress.test_size_mb()), tester="tm5")
+        r = _loads_phase(loads, seconds, notes)
+        r["tested_mb"] = loads[0].tested_mb
+        r["inconclusive"] = not r["ok"] and r["errors"]["clean"] and all(
+            l.get("unavailable") for l in r["loads"] if not l["ok"])
         return r
     if name == "ycruncher":
         if not os.access(stress.YCRUNCHER, os.X_OK):
