@@ -13,7 +13,7 @@ ctune helps an agent tune RAM, CPU and GPU on a Linux system with an AMD Ryzen C
 ctune supports AMD Zen 3 on AM4 with DDR4 and NVIDIA GPUs through NVML. Its BIOS setup decoder covers the Gigabyte B550 AORUS PRO. ctune is tested on a Ryzen 7 5800X3D, a B550 AORUS PRO rev 1.0 with DDR4 and an RTX 3080 Ti, on Bazzite. Other Zen 3 boards read timings and SMU values the same way, but their BIOS menus need their own decoder keys. Each CPU platform has its own package under `ctune/mem/platforms/`, so AM5 and DDR5 can be added later.
 
 ## Domains
-- **mem** reads the memory configuration and never writes it. It decodes the per-channel timings from the memory controller over SMN through `ryzen_smu`, and reads the SMU clocks and voltages. It decodes every BIOS setup option by menu path, from the EFI variables and the BIOS's HII form database. After one boot with `iomem=relaxed`, it also reads the trained ProcODT, RTT and CAD values and the SPD. The user makes every BIOS change, and ctune verifies it with a snapshot and a diff. The stability test runs stressapptest over the free RAM while memtest_vulkan heats the case. The fabric test adds NVMe reads and an idle soak.
+- **mem** reads the memory configuration and never writes it. It decodes the per-channel timings from the memory controller over SMN through `ryzen_smu`, and reads the SMU clocks and voltages. It decodes every BIOS setup option by menu path, from the EFI variables and the BIOS's HII form database. After one boot with `iomem=relaxed`, it also reads the trained ProcODT, RTT and CAD values and the SPD. The user makes every BIOS change, and ctune verifies it with a snapshot and a diff. The stability test runs stressapptest over the free RAM while memtest_vulkan heats the case. The fabric test adds NVMe reads and an idle soak. The tm5 test runs TestMem5 with the anta777 Extreme1 profile under Proton, in a systemd scope with swap off, and reads its verdict from TM5's log.
 - **gpu** applies NVIDIA settings at runtime through NVML: core and memory clock offsets, a locked maximum core clock (the undervolt) and the power limit. A root helper checks every value against NVML's ranges and ctune's caps before it writes. A reboot clears these settings. Settings that passed the sign-off can be persisted, and a root-owned boot unit then re-applies them with nvidia_oc at every boot. The GPU test has three loads, and ctune records clock, power, temperature and fan once a second during all of them:
   - gpu-burn in a podman container. It compares cuBLAS results, so a silent compute error counts as a failure. It runs FP32, FP64 and tensor-core phases, and a load-transient phase that freezes the container for 1 s in every 10.
   - Quake II RTX, headless in gamescope, to load the RT cores.
@@ -30,6 +30,8 @@ bin/ctune mem compare                    # previous and latest snapshot: timings
 bin/ctune mem bios ProcODT               # search the decoded BIOS settings
 bin/ctune mem test                       # 25 min RAM screen with stressapptest and GPU heat; verdict green or red
 bin/ctune mem test fabric --detach       # 90 min, then 20 min idle, in the background
+bin/ctune mem tm5-setup                  # once: TestMem5 0.12, the anta777 Extreme1 profile and a Proton prefix
+bin/ctune mem test tm5 --detach          # TestMem5 anta777 Extreme1, 3 cycles, with GPU heat
 bin/ctune cpu status                     # margin per core (BIOS or applied), clocks, voltage, temperature
 bin/ctune cpu probe                      # read every core's margin through the SMU; asks for root
 bin/ctune cpu apply --core 0 --margin -25 --dry-run   # show the guardrails and the mailbox word; drop --dry-run to apply
@@ -44,11 +46,11 @@ bin/ctune gpu test screen                # about 44 min: gpu-burn, Quake II RTX,
 bin/ctune gpu reset
 bin/ctune gpu persist --dry-run          # after a green sign-off: re-apply these settings at every boot
 bin/ctune errors                         # corrected machine-check errors by bank and subsystem
-bin/ctune signoff --detach               # about 5 h 30 min: ram, ycruncher, cpu, cpu_heavy, gpu, combined, idle
+bin/ctune signoff --detach               # about 5 h 30 min plus TM5: ram, tm5, ycruncher, cpu, cpu_heavy, gpu, combined, idle
 bin/ctune test-status                    # the running test and its phase, or the last result
 bin/ctune test-stop                      # stop the running detached test
 ```
-Agents get the same commands from an MCP server (`ctune/mcp_server.py`, standard library only). The server leaves out the one-time setup commands `gpu burn-setup`, `gpu q2rtx-setup`, `gpu unigine-setup`, `gpu persist-setup`, `gpu persist-selftest` and `boot-check`. `.mcp.json` registers the server for this project. It starts the server from `$CLAUDE_PROJECT_DIR`, which Claude Code sets to the project root, so it needs no local path. To register it elsewhere, run `claude mcp add ctune -- python3 -I <repo>/ctune/mcp_server.py`. The campaign skill and its references are in `.claude/skills/ctune/`. The agent keeps the machine's own facts and history in `data/this-machine.md`, which it creates from `.claude/skills/ctune/reference/this-machine.template.md`.
+Agents get the same commands from an MCP server (`ctune/mcp_server.py`, standard library only). The server leaves out the one-time setup commands `mem tm5-setup`, `gpu burn-setup`, `gpu q2rtx-setup`, `gpu unigine-setup`, `gpu persist-setup`, `gpu persist-selftest` and `boot-check`. `.mcp.json` registers the server for this project. It starts the server from `$CLAUDE_PROJECT_DIR`, which Claude Code sets to the project root, so it needs no local path. To register it elsewhere, run `claude mcp add ctune -- python3 -I <repo>/ctune/mcp_server.py`. The campaign skill and its references are in `.claude/skills/ctune/`. The agent keeps the machine's own facts and history in `data/this-machine.md`, which it creates from `.claude/skills/ctune/reference/this-machine.template.md`.
 
 ## Layout
 - `ctune/core/`: the journal, machine-check counters, sensors, paths, the shared test runner (`stress.py`), the sign-off suite and the detached runner.
@@ -61,6 +63,7 @@ Agents get the same commands from an MCP server (`ctune/mcp_server.py`, standard
   - memtest_vulkan v0.5.0 and vkpeak 20260527 from their GitHub releases.
   - y-cruncher v0.8.7.9547, the static Linux build from its GitHub release.
   - stressapptest v1.0.11, built from source with `./configure && make` into `tools/stressapptest/`.
+  - TestMem5 0.12 from testmem.tz.ru and the anta777 Extreme1 profile from integralfx/MemTestHelper, installed by `ctune mem tm5-setup` with pinned SHA256 hashes. TM5 is freeware under its author's copyright, so never commit it. It runs through umu-run (Bazzite ships it), which fetches GE-Proton once.
   - mprime 30.19b20 from mersenne.org. Its EULA forbids redistribution, so never commit it.
   - The gpu-burn source at a pinned commit. `ctune gpu burn-setup` builds the image.
   - nvidia_oc 0.1.24, built from a pinned commit by `ctune gpu persist-setup`.

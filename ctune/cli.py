@@ -62,13 +62,17 @@ def build():
     s.add_argument("name", nargs="?", default="latest")
     s = m.add_parser("checklist", help="settings to re-enter after a BIOS flash (writes reentry_checklist.md)")
     s.add_argument("name", nargs="?", default="latest")
-    s = m.add_parser("test", help="RAM stability: stressapptest over the free RAM with a GPU heat load")
-    s.add_argument("kind", nargs="?", default="screen", choices=["screen", "fabric"])
-    s.add_argument("--minutes", type=float, help="default 25 (screen) or 90 plus 20 idle (fabric)")
+    s = m.add_parser("test", help="RAM stability: stressapptest, or TM5 with anta777 Extreme1, over the free RAM with "
+                                  "a GPU heat load")
+    s.add_argument("kind", nargs="?", default="screen", choices=["screen", "fabric", "tm5"])
+    s.add_argument("--minutes", type=float, help="default 25 (screen) or 90 plus 20 idle (fabric); for tm5 only a cap "
+                                                 "(default 240): it runs its 3 cycles to the end")
     s.add_argument("--no-gpu-heat", action="store_true")
     s.add_argument("--mb", type=int, help="cap the RAM the test takes (default: free RAM minus 1.5 GB)")
     s.add_argument("--detach", action="store_true", help="run in the background; follow with `ctune test-status`")
     s.add_argument("--note", default="")
+    m.add_parser("tm5-setup", help="download TestMem5 0.12 and the anta777 Extreme1 profile (SHA256 pinned) and create "
+                                   "its Proton prefix (umu-run fetches GE-Proton once if none is installed)")
     s = m.add_parser("bios", help="search decoded BIOS settings")
     s.add_argument("query")
     s.add_argument("--snapshot", default="latest")
@@ -137,7 +141,8 @@ def build():
     s = sub.add_parser("passwordless", help="let GPU apply and reset, CPU probe, apply and reset, and RAM snapshots run without a "
                                             "password, through root-owned helpers and a polkit rule for this user (one prompt)")
     s.add_argument("--remove", action="store_true")
-    s = sub.add_parser("signoff", help="multi-hour suite: ram, ycruncher, cpu, cpu_heavy, gpu, combined, idle (about 5 h 30 min)")
+    s = sub.add_parser("signoff", help="multi-hour suite: ram, tm5, ycruncher, cpu, cpu_heavy, gpu, combined, idle "
+                                           "(about 5 h 30 min plus TM5)")
     s.add_argument("--phases", help=f"comma-separated subset of {','.join(signoff.PHASES)}")
     s.add_argument("--minutes", help="per-phase overrides, for example ram=120,idle=60")
     s.add_argument("--keep-going", action="store_true", help="run every phase even after a red one")
@@ -205,6 +210,9 @@ def main(argv=None):
         elif a.mcmd == "test":
             kw = {"kind": a.kind, "minutes": a.minutes, "gpu_heat": not a.no_gpu_heat, "note": a.note, "mb": a.mb}
             _out(runner.start("mem_test", **kw) if a.detach else memtest.test(**kw))
+        elif a.mcmd == "tm5-setup":
+            from ctune.mem import tm5
+            _out(tm5.setup())
         elif a.mcmd == "bios":
             for h in mem.bios_search(a.query, a.snapshot, include_hidden=a.hidden):
                 print(f"{h['location']}  =  {h['value']}  [{h['state']}]")

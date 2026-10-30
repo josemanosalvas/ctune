@@ -9,7 +9,7 @@ import subprocess
 # not ctune.core.paths: importing it here would fix DATA before a test module sets CTUNE_DATA
 TOOLS = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "tools")
 
-BLOCKED = {"podman", "pkexec", "sudo", "systemd-run", "nvidia-smi", "nvidia_oc", "curl"}
+BLOCKED = {"podman", "pkexec", "sudo", "systemd-run", "nvidia-smi", "nvidia_oc", "curl", "umu-run"}
 # systemctl may read (show, list-units), never act on the real user manager
 SYSTEMCTL_ACTS = {"start", "stop", "restart", "kill", "enable", "disable", "reset-failed", "daemon-reload"}
 
