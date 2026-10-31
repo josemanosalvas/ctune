@@ -77,14 +77,18 @@ TOOLS = {
                  "while memtest_vulkan heats the case. fabric (90 min, then 20 min idle) runs the screen with NVMe "
                  "reads, then an idle soak, for FCLK steps and after a BIOS flash. It runs detached by default, so poll "
                  "test_status. tm5 runs TestMem5 with the anta777 Extreme1 profile under Proton, with the same GPU heat "
-                 "load. It runs its 3 cycles as long as they take, and minutes only caps it (default 240). It needs "
-                 "`ctune mem tm5-setup` once and is inconclusive when it cannot start or runs out of memory. The "
+                 "load. It runs its 3 cycles as long as they take (cycles sets fewer for a quick check that is not a full "
+                 "pass), and minutes only caps it (default 240). It needs "
+                 "`ctune mem tm5-setup` once and is inconclusive when it cannot start or runs out of memory, and red when a TM5 "
+                 "message box stops it mid-test. The "
                  "verdict is red on stressapptest or TM5 errors, new corrected machine-check errors (umc points at "
                  "memory, fabric at FCLK, VDDG or VSOC), VRAM or Xid errors, or a crash.",
                  _obj({"kind": {"type": "string", "enum": ["screen", "fabric", "tm5"]}, "minutes": {"type": "number"},
+                       "cycles": {"type": "integer"},
                        "gpu_heat": {"type": "boolean"}, "detach": {"type": "boolean"}, "note": S}),
                  lambda a: _run("mem_test", memtest.test, a.get("detach", True), kind=a.get("kind", "screen"),
-                                minutes=a.get("minutes"), gpu_heat=a.get("gpu_heat", True), note=a.get("note", ""))),
+                                minutes=a.get("minutes"), gpu_heat=a.get("gpu_heat", True), note=a.get("note", ""),
+                                cycles=a.get("cycles"))),
     "mem_bios_search": ("Search the decoded BIOS settings by menu path or prompt text, for example 'ProcODT', 'VCORE SOC'.",
                         _obj({"query": S, "snapshot": S, "include_hidden": {"type": "boolean"}}, ["query"]),
                         lambda a: mem.bios_search(a["query"], a.get("snapshot", "latest"),

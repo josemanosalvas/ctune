@@ -42,9 +42,9 @@ def _gpu_heat(seconds):
     return gpu.VramLoad("gpu-heat (memtest_vulkan)", seconds + 300, optional=True), None
 
 
-def ram_loads(seconds, mb, gpu_heat=True, disk=False, tester="stressapptest"):
+def ram_loads(seconds, mb, gpu_heat=True, disk=False, tester="stressapptest", cycles=None):
     """(loads, notes). Without the GPU heat load the DIMMs run cooler than in a game: still a valid test."""
-    loads = [tm5.Load(mb, seconds) if tester == "tm5" else
+    loads = [tm5.Load(mb, seconds, cycles=cycles) if tester == "tm5" else
              stress.Load("stressapptest", stress.stressapptest_cmd(mb, seconds), stress.parse_sat, self_timed=True)]
     notes = []
     if gpu_heat:
@@ -58,9 +58,9 @@ def ram_loads(seconds, mb, gpu_heat=True, disk=False, tester="stressapptest"):
     return loads, notes
 
 
-def test(kind="screen", minutes=None, gpu_heat=True, note="", record=True, mb=None):
+def test(kind="screen", minutes=None, gpu_heat=True, note="", record=True, mb=None, cycles=None):
     """Run a RAM screen, fabric or TM5 test and record it in the journal. mb caps the RAM it takes (default: all free
-    RAM minus 1.5 GB). Returns the verdict (green, red, or inconclusive for a TM5 run that could not run) with its
+    RAM minus 1.5 GB). cycles overrides the TM5 profile's 3 cycles, for a quicker check that is not a full pass. Returns the verdict (green, red, or inconclusive for a TM5 run that could not run) with its
     sources."""
     if kind not in DEFAULT_MINUTES:
         raise ValueError("kind is 'screen', 'fabric' or 'tm5'")
@@ -80,10 +80,10 @@ def test(kind="screen", minutes=None, gpu_heat=True, note="", record=True, mb=No
         snap = stress.error_snapshot()
         r.update(phase="load", minutes=minutes)
         loads, res["notes"] = ram_loads(seconds, mb, gpu_heat, disk=(kind == "fabric"),
-                                        tester="tm5" if kind == "tm5" else "stressapptest")
+                                        tester="tm5" if kind == "tm5" else "stressapptest", cycles=cycles)
         res.update(stress.run_loads(loads, seconds))
         if kind == "tm5":
-            res["tested_mb"] = loads[0].tested_mb
+            res["tested_mb"], res["cycles"] = loads[0].tested_mb, loads[0].cycles
             res["coverage_pct"] = round(100 * res["tested_mb"] / max(1, mi.get("MemTotal", 1)), 1)
         res["notes"] += [f"{l['name']} did not run: {l['errors'][0]}" for l in res["loads"] if l.get("skipped")]
         if kind == "fabric" and not res["early_exit"]:

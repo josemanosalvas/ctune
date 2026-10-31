@@ -63,7 +63,7 @@ Agents get the same commands from an MCP server (`ctune/mcp_server.py`, standard
   - memtest_vulkan v0.5.0 and vkpeak 20260527 from their GitHub releases.
   - y-cruncher v0.8.7.9547, the static Linux build from its GitHub release.
   - stressapptest v1.0.11, built from source with `./configure && make` into `tools/stressapptest/`.
-  - TestMem5 0.12 from testmem.tz.ru and the anta777 Extreme1 profile from integralfx/MemTestHelper, installed by `ctune mem tm5-setup` with pinned SHA256 hashes. TM5 is freeware under its author's copyright, so never commit it. It runs through umu-run (Bazzite ships it), which fetches GE-Proton once.
+  - TestMem5 0.12 from testmem.tz.ru and the anta777 Extreme1 profile from integralfx/MemTestHelper, installed by `ctune mem tm5-setup` with pinned SHA256 hashes. TM5 is freeware under its author's copyright, so never commit it. It runs through umu-run (Bazzite ships it), which fetches GE-Proton once. xdotool (Bazzite ships it too) closes the AWE privilege box that TM5 opens under Wine.
   - mprime 30.19b20 from mersenne.org. Its EULA forbids redistribution, so never commit it.
   - The gpu-burn source at a pinned commit. `ctune gpu burn-setup` builds the image.
   - nvidia_oc 0.1.24, built from a pinned commit by `ctune gpu persist-setup`.
