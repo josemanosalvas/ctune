@@ -68,6 +68,7 @@ def build():
     s.add_argument("--minutes", type=float, help="default 25 (screen) or 90 plus 20 idle (fabric); for tm5 only a cap "
                                                  "(default 240), because it runs its 3 cycles to the end")
     s.add_argument("--no-gpu-heat", action="store_true")
+    s.add_argument("--cycles", type=int, help="tm5 only: cycles instead of the profile's 3 (a quick check, not a pass)")
     s.add_argument("--mb", type=int, help="cap the RAM the test takes (default: free RAM minus 1.5 GB)")
     s.add_argument("--detach", action="store_true", help="run in the background; follow with `ctune test-status`")
     s.add_argument("--note", default="")
@@ -216,7 +217,8 @@ def _main(a):
         elif a.mcmd == "checklist":
             _out(mem.checklist(a.name))
         elif a.mcmd == "test":
-            kw = {"kind": a.kind, "minutes": a.minutes, "gpu_heat": not a.no_gpu_heat, "note": a.note, "mb": a.mb}
+            kw = {"kind": a.kind, "minutes": a.minutes, "gpu_heat": not a.no_gpu_heat, "note": a.note, "mb": a.mb,
+                  "cycles": a.cycles}
             _out(runner.start("mem_test", **kw) if a.detach else memtest.test(**kw))
         elif a.mcmd == "tm5-setup":
             from ctune.mem import tm5

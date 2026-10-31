@@ -21,7 +21,8 @@
   free RAM and lowers it otherwise (the profile's own note says to fit it to the machine). Everything else, the test
   sequence, Time (%) 500 and 3 cycles, stays as published.
 - TM5 writes Log.txt next to TM5.exe and then waits in a dialog, so ctune reads the log and stops the scope at the
-  final line: "The testing is completed, of errors is not detected." or "... is revealed N of errors!".
+  final line: "Testing completed in 1:23.41, no errors." or "Testing is completed through 1:23.41, detected N
+  error(s).". The final dialog says the same and is not a blocking box.
 """
 import os
 import re
@@ -64,11 +65,13 @@ while kill -0 "$p" 2>/dev/null; do
 done
 wait "$p"'''
 
-DONE_OK = re.compile(r"The testing is completed, of errors is not detected")
-DONE_BAD = re.compile(r"The testing is completed, is revealed (\d+) of errors")
+# the log's own final lines, and the final dialog's text for logs that quote it
+DONE_OK = re.compile(r"Testing completed in [\d:.hms ]+, no errors|The testing is completed, of errors is not detected")
+DONE_BAD = re.compile(r"(?:detected|is revealed) (\d+) (?:error|of errors)")
 STARTED = re.compile(r"Start testing at [\d:]+, ([\d.]+)(Mb|Gb) x(\d+)")
 FATAL = re.compile(r"Fatal error|not started|need to run with Administrator")
 WINDOW = re.compile(r"^(Testing Window Size \(Mb\)=)(\d+)", re.M)
+CYCLES = re.compile(r"^(Cycles=)(\d+)", re.M)
 MSGBOX = re.compile(r'trace:msgbox:MSGBOX_OnInit L"(.*)"')
 
 
@@ -99,9 +102,12 @@ def window_mb(mb, threads, cap):
     return w if w >= MIN_WINDOW_MB else 0
 
 
-def write_cfg(text, window):
-    """The profile with its window set, in CRLF: TM5 ignores a config with bare LF line endings."""
+def write_cfg(text, window, cycles=None):
+    """The profile with its window (and optionally its cycle count) set, in CRLF: TM5 ignores a config with bare LF
+    line endings."""
     text = WINDOW.sub(lambda m: f"{m.group(1)}{window}", text, count=1)
+    if cycles:
+        text = CYCLES.sub(lambda m: f"{m.group(1)}{cycles}", text, count=1)
     return "\r\n".join(text.replace("\r\n", "\n").split("\n"))
 
 
@@ -121,7 +127,7 @@ def parse_log(text):
 def blocking_boxes(out):
     """The texts of the message boxes TM5 opened, from Wine's msgbox trace, except the AWE box ctune closes."""
     texts = [m.group(1).replace("\\r\\n", " ").replace("\\n", " ").strip() for m in MSGBOX.finditer(out)]
-    return [t for t in texts if not t.startswith("To enable AWE")]
+    return [t for t in texts if not t.startswith(("To enable AWE", "The testing is completed"))]
 
 
 def _read(path):
@@ -135,11 +141,13 @@ def _read(path):
 class Load(stress.Load):
     """TM5 as a phase load that ends the phase when it finishes (ends_phase). The phase's seconds are only a cap."""
 
-    def __init__(self, mb, seconds, threads=None):
+    def __init__(self, mb, seconds, threads=None, cycles=None):
         self.threads = threads or os.cpu_count() or 1
         with open(PROFILE, encoding="utf-8", errors="replace") as f:
             self.profile = f.read()
         self.window = window_mb(mb, self.threads, profile_window_mb(self.profile))
+        m = CYCLES.search(self.profile)
+        self.cycles = cycles or (int(m.group(2)) if m else 3)
         self.scope = f"ctune-tm5-{time.strftime('%Y%m%d-%H%M%S')}-{os.getpid()}.scope"
         cmd = ["systemd-run", "--user", "--scope", "--quiet", f"--unit={self.scope}", "-p", "MemorySwapMax=0",
                "-p", f"RuntimeMaxSec={seconds + 300}", "-p", f"TimeoutStopSec={STOP_TIMEOUT}",
@@ -160,7 +168,7 @@ class Load(stress.Load):
             if os.path.exists(p):
                 os.remove(p)
         with open(CFG, "w", encoding="utf-8", newline="") as f:
-            f.write(write_cfg(self.profile, self.window))
+            f.write(write_cfg(self.profile, self.window, self.cycles))
         os.makedirs(PREFIX, exist_ok=True)
         env = dict(stress.user_env(), WINEPREFIX=PREFIX, GAMEID="umu-0", PROTONPATH=PROTON,
                    WINEDEBUG="-all,trace+msgbox")
@@ -216,6 +224,7 @@ class Load(stress.Load):
         out = self.out or "".join(getattr(self, "_chunks", []))
         boxes = blocking_boxes(out)
         r = {"name": self.name, "rc": self.proc.returncode, "threads": self.threads, "window_mb": self.window,
+             "cycles": self.cycles,
              "tested_mb": self.tested_mb, **log, "message_boxes": boxes}
         r["ok"] = log["completed"] and log["errors_reported"] == 0 and not log["fatal"]
         if r["ok"]:
@@ -235,7 +244,7 @@ class Load(stress.Load):
                    f"no 'Start testing' line after {START_TIMEOUT_S} s" if self.no_start else tail or "no output")
             r["errors"].insert(0, f"TM5 never started testing ({why})")
         elif self.stopped:
-            r["errors"].insert(0, "stopped before TM5 finished its 3 cycles")
+            r["errors"].insert(0, f"stopped before TM5 finished its {self.cycles} cycles")
         else:
             r["errors"].insert(0, "TM5 ended without its final log line")
         r["errors"] += log["fatal"]

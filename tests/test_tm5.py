@@ -36,6 +36,14 @@ class Log(unittest.TestCase):
         r = tm5.parse_log(HEAD + "The testing is completed, is revealed 3 of errors!\r\n")
         self.assertEqual((r["completed"], r["errors_reported"]), (True, 3))
 
+    def test_log_final_lines(self):
+        r = tm5.parse_log(HEAD + "Testing completed in 1:23.41, no errors.\r\n")
+        self.assertEqual((r["completed"], r["errors_reported"], r["errors"]), (True, 0, []))
+        r = tm5.parse_log(HEAD + "Error in test #15 through 25m 31s.\r\nTesting is completed through 1:23.41,\r\n"
+                                 "detected 27 error(s).\r\n")
+        self.assertEqual((r["completed"], r["errors_reported"]), (True, 27))
+        self.assertIn("Error in test #15 through 25m 31s.", r["errors"])
+
     def test_running(self):
         r = tm5.parse_log(HEAD)
         self.assertEqual((r["started"], r["completed"], r["errors_reported"]), (True, False, None))
@@ -55,6 +63,10 @@ class Boxes(unittest.TestCase):
         self.assertEqual(tm5.blocking_boxes(AWE), [])
         self.assertEqual(tm5.blocking_boxes(AWE + CRITICAL),
                          ["Process not running (1 of 16), state 2. Critical error, programm stopped!"])
+
+    def test_the_final_dialog_is_not_blocking(self):
+        done = '01a0:trace:msgbox:MSGBOX_OnInit L"The testing is completed, is revealed 27 of errors!"\n'
+        self.assertEqual(tm5.blocking_boxes(AWE + done), [])
 
     def test_the_helper_closes_the_awe_box_inside_gamescope(self):
         with tempfile.TemporaryDirectory() as d:
@@ -78,6 +90,11 @@ class Window(unittest.TestCase):
 
     def test_too_little_ram(self):
         self.assertEqual(tm5.window_mb(2000, 16, 1408), 0)
+
+    def test_rewrite_sets_the_cycles_when_asked(self):
+        prof = "[Main Section]\nCycles=3\n" + PROFILE
+        self.assertIn("Cycles=3\r\n", tm5.write_cfg(prof, 1280))
+        self.assertIn("Cycles=1\r\n", tm5.write_cfg(prof, 1280, 1))
 
     def test_rewrite_sets_only_the_window_in_crlf(self):
         out = tm5.write_cfg(PROFILE, 1280)
