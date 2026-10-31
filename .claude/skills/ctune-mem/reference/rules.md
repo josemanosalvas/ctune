@@ -28,7 +28,7 @@ Convert between clocks and time with ns = 2000 × clocks / MT/s, to compare sett
 
 ## Voltages and fabric
 - The target is FCLK = UCLK = MCLK. Above the CPU's fabric ceiling you get corrected errors in the fabric or PCIe banks, or random reboots at idle.
-- VDDG must be at least 40 mV below the real VSOC (the cLDO dropout). VDDP must be at least 0.1 V below VDIMM and at most 1.05 V. Some single VDDP values fail while their neighbours work.
+- Some single VDDP values fail while their neighbours work.
 - SoC voltage above about 1.15 V can reduce stability. Four DIMMs need more SoC voltage than two. One report from a B550 AORUS PRO with four DIMMs needed at least 1.12 V.
 - At high FCLK, PCIe link errors sometimes disappear when the chipset or GPU link is forced to PCIe Gen3.
 - At an FCLK near 1800 MHz, intermittent training failures often go away with more VDDG CCD.

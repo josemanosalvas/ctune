@@ -1,6 +1,6 @@
 ---
 name: ctune-gpu
-description: NVIDIA GPU tuning with ctune on Ampere under Linux. Use when planning, applying, testing or signing off an undervolt (clock lock and core offset), a memory offset or a power limit, when persisting signed-off settings at boot, or when the GPU logs an Xid or crashes.
+description: NVIDIA GPU tuning with ctune on Ampere under Linux. Use for an undervolt, memory offset or power limit step, boot persistence after a sign-off, or an Xid or GPU crash.
 ---
 
 # GPU campaign

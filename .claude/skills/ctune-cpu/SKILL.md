@@ -1,6 +1,6 @@
 ---
 name: ctune-cpu
-description: Curve Optimizer tuning with ctune on Zen 3. Use when planning, applying, testing or signing off a per-core margin, when entering the final margins in the BIOS, or when a core logs machine-check errors or the machine crashes at light load or idle.
+description: Curve Optimizer tuning with ctune on Zen 3. Use for a per-core margin step, entering the final margins in the BIOS, or a core's machine-check errors or a crash at light load or idle.
 ---
 
 # Curve Optimizer campaign
