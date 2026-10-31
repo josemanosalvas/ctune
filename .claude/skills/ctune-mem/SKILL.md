@@ -5,7 +5,7 @@ description: RAM tuning with ctune on Zen 3 and DDR4. Use when planning, applyin
 
 # RAM and fabric campaign
 
-Read [the campaign frame](../../../docs/campaign.md) before the first step: journal, verdicts, long tests, sign-off and crash handling are defined there. Read [the rules](reference/rules.md) before planning: presets, timing formulas, voltages and error signatures. [The tests](reference/tests.md) cover what each RAM test does, TM5, and how to read a TM5 failure.
+Read [the campaign frame](../../ctune/campaign.md) before the first step: journal, verdicts, long tests, sign-off and crash handling are defined there. Read [the rules](reference/rules.md) before planning: presets, timing formulas, voltages and error signatures. [The tests](reference/tests.md) cover what each RAM test does, TM5, and how to read a TM5 failure.
 
 ## Sequence
 The integralfx DDR4 OC guide's order: frequency before tighter timings. A stage is done when its next step is red and rolled back.

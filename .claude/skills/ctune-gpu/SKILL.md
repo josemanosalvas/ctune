@@ -5,7 +5,7 @@ description: NVIDIA GPU tuning with ctune on Ampere under Linux. Use when planni
 
 # GPU campaign
 
-Read [the campaign frame](../../../docs/campaign.md) before the first step: journal, verdicts, long tests, sign-off and crash handling are defined there. [The screen](reference/screen.md) describes each part of `gpu_test` and how to read it; read it before judging a result. [Persistence](reference/persist.md) covers boot persistence after a green sign-off.
+Read [the campaign frame](../../ctune/campaign.md) before the first step: journal, verdicts, long tests, sign-off and crash handling are defined there. [The screen](reference/screen.md) describes each part of `gpu_test` and how to read it; read it before judging a result. [Persistence](reference/persist.md) covers boot persistence after a green sign-off.
 
 ctune sets everything through NVML at runtime; settings last until reboot or driver reload, so a crash undoes them. NVML exposes no voltage control, so the **undervolt** is a locked max clock plus a positive core offset: `max_clock` caps the top of the V/F curve, and `core_offset` shifts the curve up, so the capped clock runs at a lower voltage point. The card then holds the same or higher clocks at lower voltage, and stays under the power limit more often.
 

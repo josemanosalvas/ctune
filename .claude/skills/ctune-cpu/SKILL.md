@@ -5,7 +5,7 @@ description: Curve Optimizer tuning with ctune on Zen 3. Use when planning, appl
 
 # Curve Optimizer campaign
 
-Read [the campaign frame](../../../docs/campaign.md) before the first step: journal, verdicts, long tests, sign-off and crash handling are defined there.
+Read [the campaign frame](../../ctune/campaign.md) before the first step: journal, verdicts, long tests, sign-off and crash handling are defined there.
 
 Curve Optimizer (CO) shifts each core's voltage-frequency curve by a **margin**: a negative margin means less voltage at every clock, about 3 to 5 mV per count. ctune sets margins at runtime through the SMU, and they last until reboot. For the SMU command IDs, the encoding and the sources, read `docs/research/cpu-co-smu.md` when a probe or readback does not match, or before you change the SMU code.
 
