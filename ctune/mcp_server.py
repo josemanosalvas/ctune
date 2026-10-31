@@ -78,7 +78,8 @@ TOOLS = {
                  "reads, then an idle soak, for FCLK steps and after a BIOS flash. It runs detached by default, so poll "
                  "test_status. tm5 runs TestMem5 with the anta777 Extreme1 profile under Proton, with the same GPU heat "
                  "load. It runs its 3 cycles as long as they take, and minutes only caps it (default 240). It needs "
-                 "`ctune mem tm5-setup` once and is inconclusive when it cannot start or runs out of memory. The "
+                 "`ctune mem tm5-setup` once and is inconclusive when it cannot start or runs out of memory, and red when a TM5 "
+                 "message box stops it mid-test. The "
                  "verdict is red on stressapptest or TM5 errors, new corrected machine-check errors (umc points at "
                  "memory, fabric at FCLK, VDDG or VSOC), VRAM or Xid errors, or a crash.",
                  _obj({"kind": {"type": "string", "enum": ["screen", "fabric", "tm5"]}, "minutes": {"type": "number"},

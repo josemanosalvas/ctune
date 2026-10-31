@@ -172,6 +172,14 @@ def _interrupt_on_terminate():
 def main(argv=None):
     a = build().parse_args(argv)
     _interrupt_on_terminate()
+    try:
+        return _main(a)
+    except KeyboardInterrupt:   # a stop: the `finally` blocks have stopped the loads and the journal has a note
+        print("ctune: stopped", file=sys.stderr)
+        return 130
+
+
+def _main(a):
     if a.cmd == "status":
         st = mem.status()
         st["test"] = runner.status()

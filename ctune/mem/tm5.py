@@ -3,8 +3,14 @@
 - TM5 0.12 from its author's site (testmem.tz.ru), unpacked in the gitignored tools/tm5/ and never redistributed. The
   profile is extreme@anta777.cfg from integralfx/MemTestHelper at a pinned commit. Both have pinned SHA256 hashes.
 - TM5 is a 32-bit Windows program. It starts one worker process per logical CPU (Cores=0), and each worker tests its
-  own "Testing Window Size" of locked memory, so no worker needs more than 4 GB and AWE never matters. The test loops
-  in MT0.dll are plain x86 code and run unchanged under Proton. Only allocation and threads go through Wine.
+  own "Testing Window Size" of locked memory, so no worker needs more than 4 GB. The test loops in MT0.dll are plain
+  x86 code and run unchanged under Proton. Only allocation and threads go through Wine.
+- MT0.dll asks for SeLockMemoryPrivilege, which Wine's token never holds, so TM5 shows "To enable AWE, you must run
+  with Administrator privileges!" and waits on it before it starts any worker. Without AWE it tests the same window
+  with VirtualLock, so a helper inside gamescope's X display presses Return on that box (xdotool, Bazzite ships it).
+- Wine traces every message box TM5 opens (WINEDEBUG=trace+msgbox). Any other box blocks TM5 the same way, so ctune
+  stops the run there and reports its text. A run that has not logged "Start testing" after START_TIMEOUT_S is
+  stopped too, and is inconclusive.
 - umu-run (umu-launcher, Bazzite ships it) runs it with GE-Proton in its own prefix under ctune's data directory.
   It renders into gamescope's headless backend, as the Unigine loads do, so it needs no desktop session.
 - The whole tree runs in a transient systemd user scope with MemorySwapMax=0, because Wine cannot pin pages the way
@@ -48,19 +54,29 @@ PER_PROCESS_MB = 64          # Wine's own memory per worker on top of its window
 MIN_WINDOW_MB = 256
 POLL_S = 5
 STOP_TIMEOUT = "15s"
+START_TIMEOUT_S = 300        # Proton starts in under a minute, and every worker locks its window before the log line
+AWE_BOX = "TestMem5, AWE module"
+# runs inside gamescope, so DISPLAY is its Xwayland; $1 is TM5.exe, $2 the title of the box to close
+DISMISS = r'''umu-run "$1" & p=$!
+while kill -0 "$p" 2>/dev/null; do
+  for w in $(xdotool search --onlyvisible --name "^$2\$" 2>/dev/null); do xdotool key --window "$w" Return 2>/dev/null; done
+  sleep 2
+done
+wait "$p"'''
 
 DONE_OK = re.compile(r"The testing is completed, of errors is not detected")
 DONE_BAD = re.compile(r"The testing is completed, is revealed (\d+) of errors")
 STARTED = re.compile(r"Start testing at [\d:]+, ([\d.]+)(Mb|Gb) x(\d+)")
 FATAL = re.compile(r"Fatal error|not started|need to run with Administrator")
 WINDOW = re.compile(r"^(Testing Window Size \(Mb\)=)(\d+)", re.M)
+MSGBOX = re.compile(r'trace:msgbox:MSGBOX_OnInit L"(.*)"')
 
 
 def unavailable():
     """None if a run can start, else why not (inconclusive, not red)."""
     if not (os.path.exists(EXE) and os.path.exists(PROFILE)):
         return "TestMem5 is missing from tools/tm5/: run `ctune mem tm5-setup` once"
-    for tool in ("umu-run", "gamescope", "systemd-run"):
+    for tool in ("umu-run", "gamescope", "systemd-run", "xdotool"):
         if not _which(tool):
             return f"{tool} is missing (Bazzite ships it)"
     return None
@@ -102,6 +118,12 @@ def parse_log(text):
             "errors": errors}
 
 
+def blocking_boxes(out):
+    """The texts of the message boxes TM5 opened, from Wine's msgbox trace, except the AWE box ctune closes."""
+    texts = [m.group(1).replace("\\r\\n", " ").replace("\\n", " ").strip() for m in MSGBOX.finditer(out)]
+    return [t for t in texts if not t.startswith("To enable AWE")]
+
+
 def _read(path):
     try:
         with open(path, encoding="cp1251", errors="replace") as f:
@@ -121,9 +143,11 @@ class Load(stress.Load):
         self.scope = f"ctune-tm5-{time.strftime('%Y%m%d-%H%M%S')}-{os.getpid()}.scope"
         cmd = ["systemd-run", "--user", "--scope", "--quiet", f"--unit={self.scope}", "-p", "MemorySwapMax=0",
                "-p", f"RuntimeMaxSec={seconds + 300}", "-p", f"TimeoutStopSec={STOP_TIMEOUT}",
-               "gamescope", "--backend", "headless", "-w", "640", "-h", "480", "--", "umu-run", EXE]
+               "gamescope", "--backend", "headless", "-w", "640", "-h", "480", "--",
+               "sh", "-c", DISMISS, "sh", EXE, AWE_BOX]
         super().__init__("tm5 (anta777 extreme)", cmd, None, cwd=DIR)
         self.ends_phase, self.completed, self.scope_result = True, False, None
+        self.no_start, self.boxes = False, []
 
     @property
     def tested_mb(self):
@@ -138,7 +162,8 @@ class Load(stress.Load):
         with open(CFG, "w", encoding="utf-8", newline="") as f:
             f.write(write_cfg(self.profile, self.window))
         os.makedirs(PREFIX, exist_ok=True)
-        env = dict(stress.user_env(), WINEPREFIX=PREFIX, GAMEID="umu-0", PROTONPATH=PROTON, WINEDEBUG="-all")
+        env = dict(stress.user_env(), WINEPREFIX=PREFIX, GAMEID="umu-0", PROTONPATH=PROTON,
+                   WINEDEBUG="-all,trace+msgbox")
         self.proc = subprocess.Popen(self.cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                                      stdin=subprocess.DEVNULL, cwd=self.cwd, env=env, text=True, errors="replace",
                                      start_new_session=True)
@@ -148,10 +173,18 @@ class Load(stress.Load):
         return self
 
     def _watch(self):
-        """Stop the scope at TM5's final log line: TM5 itself then waits in a dialog."""
+        """Stop the scope at TM5's final log line, at a message box ctune does not close, or when TM5 has not
+        started testing in time: in each case TM5 would wait in a dialog forever."""
+        t0 = time.time()
         while self.alive():
-            if parse_log(_read(LOG))["completed"]:
+            log = parse_log(_read(LOG))
+            if log["completed"]:
                 self.completed = True
+                self._stop_scope()
+                return
+            self.boxes = blocking_boxes("".join(getattr(self, "_chunks", [])))
+            self.no_start = not log["started"] and time.time() - t0 > START_TIMEOUT_S
+            if self.boxes or self.no_start:
                 self._stop_scope()
                 return
             time.sleep(POLL_S)
@@ -180,8 +213,10 @@ class Load(stress.Load):
             subprocess.run(["systemctl", "--user", "reset-failed", self.scope], capture_output=True,
                            env=stress.user_env())
         log = parse_log(_read(LOG))
+        out = self.out or "".join(getattr(self, "_chunks", []))
+        boxes = blocking_boxes(out)
         r = {"name": self.name, "rc": self.proc.returncode, "threads": self.threads, "window_mb": self.window,
-             "tested_mb": self.tested_mb, **log}
+             "tested_mb": self.tested_mb, **log, "message_boxes": boxes}
         r["ok"] = log["completed"] and log["errors_reported"] == 0 and not log["fatal"]
         if r["ok"]:
             return r
@@ -191,10 +226,14 @@ class Load(stress.Load):
             r["unavailable"] = True
             r["errors"].insert(0, "the TM5 scope ran out of memory (swap is off for it): close large apps or cap "
                                   "the RAM with --mb")
+        elif boxes and log["started"]:   # TM5 itself stopped mid-test, for example a worker that died
+            r["errors"].insert(0, f"TM5 stopped on a message box: {' / '.join(boxes)}")
         elif not log["started"] and not self.stopped:
-            r["unavailable"] = True   # Proton or gamescope never got TM5 to its first test
-            tail = " | ".join((self.out or "".join(getattr(self, "_chunks", []))).strip().splitlines()[-4:])
-            r["errors"].insert(0, f"TM5 never started testing ({tail[-300:] or 'no output'})")
+            r["unavailable"] = True   # Proton, gamescope or a dialog kept TM5 from its first test
+            tail = " | ".join([l for l in out.strip().splitlines() if "trace:msgbox" not in l][-4:])[-300:]
+            why = (f"a message box: {' / '.join(boxes)}" if boxes else
+                   f"no 'Start testing' line after {START_TIMEOUT_S} s" if self.no_start else tail or "no output")
+            r["errors"].insert(0, f"TM5 never started testing ({why})")
         elif self.stopped:
             r["errors"].insert(0, "stopped before TM5 finished its 3 cycles")
         else:

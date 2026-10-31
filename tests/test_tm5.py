@@ -45,6 +45,28 @@ class Log(unittest.TestCase):
         self.assertEqual(len(r["fatal"]), 2)
 
 
+AWE = '0184:trace:msgbox:MSGBOX_OnInit L"To enable AWE, you must run with\\r\\nAdministrator privileges!"\n'
+CRITICAL = ('019c:trace:msgbox:MSGBOX_OnInit L"Process not running (1 of 16), state 2.\\r\\n'
+            'Critical error, programm stopped!"\n')
+
+
+class Boxes(unittest.TestCase):
+    def test_only_the_awe_box_is_closed(self):
+        self.assertEqual(tm5.blocking_boxes(AWE), [])
+        self.assertEqual(tm5.blocking_boxes(AWE + CRITICAL),
+                         ["Process not running (1 of 16), state 2. Critical error, programm stopped!"])
+
+    def test_the_helper_closes_the_awe_box_inside_gamescope(self):
+        with tempfile.TemporaryDirectory() as d:
+            prof = os.path.join(d, "p.cfg")
+            with open(prof, "w") as f:
+                f.write(PROFILE)
+            with mock.patch.object(tm5, "PROFILE", prof):
+                cmd = tm5.Load(32000, 60, threads=16).cmd
+        self.assertEqual(cmd[cmd.index("--") + 1:], ["sh", "-c", tm5.DISMISS, "sh", tm5.EXE, tm5.AWE_BOX])
+        self.assertIn("xdotool", tm5.DISMISS)
+
+
 class Window(unittest.TestCase):
     def test_keeps_the_profile_window_when_it_fits(self):
         self.assertEqual(tm5.window_mb(32000, 16, 1408), 1408)
@@ -82,7 +104,7 @@ class EndsPhase(unittest.TestCase):
 
 
 class LoadResult(unittest.TestCase):
-    def _load(self, log, stopped=False, rc=0, unit=None):
+    def _load(self, log, stopped=False, rc=0, unit=None, out="wine: something\n", no_start=False):
         with tempfile.TemporaryDirectory() as d:
             prof = os.path.join(d, "p.cfg")
             with open(prof, "w") as f:
@@ -91,7 +113,7 @@ class LoadResult(unittest.TestCase):
                 ld = tm5.Load(32000, 60, threads=16)
         ld.proc = mock.Mock(returncode=rc)
         ld._reader = mock.Mock()
-        ld.stopped, ld.out = stopped, "wine: something\n"
+        ld.stopped, ld.out, ld.no_start = stopped, out, no_start
         with mock.patch.object(tm5, "_read", return_value=log), \
                 mock.patch.object(stress, "unit_state", return_value=unit or {}):
             return ld.result()
@@ -116,10 +138,39 @@ class LoadResult(unittest.TestCase):
         r = self._load(HEAD, rc=-9, unit={"Result": "oom-kill", "ActiveState": "inactive"})
         self.assertTrue(r["unavailable"])
 
+    def test_the_awe_box_is_not_an_error(self):
+        r = self._load(HEAD + "The testing is completed, of errors is not detected.\r\n", out=AWE)
+        self.assertTrue(r["ok"], r)
+        self.assertEqual(r["message_boxes"], [])
+
+    def test_a_box_mid_test_is_red_with_its_text(self):
+        r = self._load(HEAD, rc=-15, out=AWE + CRITICAL)
+        self.assertFalse(r["ok"])
+        self.assertFalse(r.get("unavailable"))
+        self.assertIn("Process not running (1 of 16), state 2. Critical error", r["errors"][0])
+
+    def test_a_box_before_the_first_test_is_unavailable(self):
+        r = self._load("", rc=-15, out=CRITICAL)
+        self.assertTrue(r["unavailable"])
+        self.assertIn("a message box: Process not running", r["errors"][0])
+
+    def test_start_timeout_is_unavailable(self):
+        r = self._load("", rc=-15, out=AWE, no_start=True)
+        self.assertTrue(r["unavailable"])
+        self.assertIn(f"after {tm5.START_TIMEOUT_S} s", r["errors"][0])
+
     def test_stopped_midway_is_red(self):
         r = self._load(HEAD, stopped=True)
         self.assertFalse(r["ok"])
         self.assertFalse(r.get("unavailable"))
+
+
+class Stop(unittest.TestCase):
+    def test_a_stop_exits_130_without_a_traceback(self):
+        from ctune import cli
+        with mock.patch.object(cli, "_main", side_effect=KeyboardInterrupt), \
+                mock.patch.object(cli, "_interrupt_on_terminate"), mock.patch("sys.stderr"):
+            self.assertEqual(cli.main(["test-status"]), 130)
 
 
 if __name__ == "__main__":
