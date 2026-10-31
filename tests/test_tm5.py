@@ -75,8 +75,12 @@ class Boxes(unittest.TestCase):
                 f.write(PROFILE)
             with mock.patch.object(tm5, "PROFILE", prof):
                 cmd = tm5.Load(32000, 60, threads=16).cmd
-        self.assertEqual(cmd[cmd.index("--") + 1:], ["sh", "-c", tm5.DISMISS, "sh", tm5.EXE, tm5.AWE_BOX])
+        args = cmd[cmd.index("--") + 1:]
+        self.assertEqual(args[:6], ["sh", "-c", tm5.DISMISS, "sh", tm5.EXE, tm5.AWE_BOX])
+        self.assertEqual(args[6], tm5.LOG)
+        self.assertTrue(args[7].endswith(".png"))
         self.assertIn("xdotool", tm5.DISMISS)
+        self.assertIn("import -window", tm5.DISMISS)
 
 
 class Window(unittest.TestCase):

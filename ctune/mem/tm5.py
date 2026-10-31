@@ -8,6 +8,8 @@
 - MT0.dll asks for SeLockMemoryPrivilege, which Wine's token never holds, so TM5 shows "To enable AWE, you must run
   with Administrator privileges!" and waits on it before it starts any worker. Without AWE it tests the same window
   with VirtualLock, so a helper inside gamescope's X display presses Return on that box (xdotool, Bazzite ships it).
+- When the log has its final line, the helper also saves a PNG of TM5's window next to the run's log (ImageMagick's
+  import, Bazzite ships it), because the window shows the errors per test and the log sometimes names none.
 - Wine traces every message box TM5 opens (WINEDEBUG=trace+msgbox). Any other box blocks TM5 the same way, so ctune
   stops the run there and reports its text. A run that has not logged "Start testing" after START_TIMEOUT_S is
   stopped too, and is inconclusive.
@@ -52,18 +54,26 @@ LOG = os.path.join(DIR, "Log.txt")
 PREFIX = os.path.join(DATA, "tm5-prefix")
 PROTON = "GE-Proton"         # umu-run resolves it to the newest GE-Proton and downloads it when none is installed
 PER_PROCESS_MB = 64          # Wine's own memory per worker on top of its window (about 22 MB measured)
-MIN_WINDOW_MB = 256
+MIN_WINDOW_MB = 512          # TM5 replaces a smaller window (256 and 304 MB seen) with its own 1 GB per worker
 POLL_S = 5
 STOP_TIMEOUT = "15s"
 START_TIMEOUT_S = 300        # Proton starts in under a minute, and every worker locks its window before the log line
 AWE_BOX = "TestMem5, AWE module"
-# runs inside gamescope, so DISPLAY is its Xwayland; $1 is TM5.exe, $2 the title of the box to close
+# runs inside gamescope, so DISPLAY is its Xwayland; $1 is TM5.exe, $2 the title of the box to close, $3 the log and
+# $4 the screenshot to take of TM5's window once the log has its final line (the window shows the errors per test)
 DISMISS = r'''umu-run "$1" & p=$!
 while kill -0 "$p" 2>/dev/null; do
   for w in $(xdotool search --onlyvisible --name "^$2\$" 2>/dev/null); do xdotool key --window "$w" Return 2>/dev/null; done
+  if [ ! -e "$4" ] && [ ! -e "$4.failed" ] && grep -aqE "completed (in|through)" "$3" 2>/dev/null; then
+    sleep 1
+    w=$(xdotool search --onlyvisible --name "^TestMem5 v" 2>/dev/null | head -n 1)
+    [ -n "$w" ] && import -window "$w" "$4.part.png" 2>/dev/null && mv "$4.part.png" "$4"
+    [ -e "$4" ] || : > "$4.failed"
+  fi
   sleep 2
 done
 wait "$p"'''
+SHOT_WAIT_S = 20
 
 # the log's own final lines, and the final dialog's text for logs that quote it
 DONE_OK = re.compile(r"Testing completed in [\d:.hms ]+, no errors|The testing is completed, of errors is not detected")
@@ -149,10 +159,11 @@ class Load(stress.Load):
         m = CYCLES.search(self.profile)
         self.cycles = cycles or (int(m.group(2)) if m else 3)
         self.scope = f"ctune-tm5-{time.strftime('%Y%m%d-%H%M%S')}-{os.getpid()}.scope"
+        self.shot = os.path.join(DATA, "runs", self.scope.replace(".scope", ".png"))
         cmd = ["systemd-run", "--user", "--scope", "--quiet", f"--unit={self.scope}", "-p", "MemorySwapMax=0",
                "-p", f"RuntimeMaxSec={seconds + 300}", "-p", f"TimeoutStopSec={STOP_TIMEOUT}",
                "gamescope", "--backend", "headless", "-w", "640", "-h", "480", "--",
-               "sh", "-c", DISMISS, "sh", EXE, AWE_BOX]
+               "sh", "-c", DISMISS, "sh", EXE, AWE_BOX, LOG, self.shot]
         super().__init__("tm5 (anta777 extreme)", cmd, None, cwd=DIR)
         self.ends_phase, self.completed, self.scope_result = True, False, None
         self.no_start, self.boxes = False, []
@@ -170,6 +181,7 @@ class Load(stress.Load):
         with open(CFG, "w", encoding="utf-8", newline="") as f:
             f.write(write_cfg(self.profile, self.window, self.cycles))
         os.makedirs(PREFIX, exist_ok=True)
+        os.makedirs(os.path.dirname(self.shot), exist_ok=True)
         env = dict(stress.user_env(), WINEPREFIX=PREFIX, GAMEID="umu-0", PROTONPATH=PROTON,
                    WINEDEBUG="-all,trace+msgbox")
         self.proc = subprocess.Popen(self.cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
@@ -188,6 +200,10 @@ class Load(stress.Load):
             log = parse_log(_read(LOG))
             if log["completed"]:
                 self.completed = True
+                deadline = time.time() + SHOT_WAIT_S   # the helper's screenshot of the errors per test
+                while self.alive() and time.time() < deadline and not any(
+                        os.path.exists(p) for p in (self.shot, self.shot + ".failed")):
+                    time.sleep(1)
                 self._stop_scope()
                 return
             self.boxes = blocking_boxes("".join(getattr(self, "_chunks", [])))
@@ -225,7 +241,8 @@ class Load(stress.Load):
         boxes = blocking_boxes(out)
         r = {"name": self.name, "rc": self.proc.returncode, "threads": self.threads, "window_mb": self.window,
              "cycles": self.cycles,
-             "tested_mb": self.tested_mb, **log, "message_boxes": boxes}
+             "tested_mb": self.tested_mb, **log, "message_boxes": boxes,
+             "screenshot": self.shot if os.path.exists(self.shot) else None}
         r["ok"] = log["completed"] and log["errors_reported"] == 0 and not log["fatal"]
         if r["ok"]:
             return r
