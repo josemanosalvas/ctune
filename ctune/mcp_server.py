@@ -80,7 +80,7 @@ TOOLS = {
                  "load. It runs its 3 cycles as long as they take (cycles sets fewer for a quick check that is not a full "
                  "pass), and minutes only caps it (default 240). It needs "
                  "`ctune mem tm5-setup` once and is inconclusive when it cannot start or runs out of memory, and red when a TM5 "
-                 "message box stops it mid-test. The "
+                 "message box stops it mid-test. It stops at TM5's first error, since one error makes it red. The "
                  "verdict is red on stressapptest or TM5 errors, new corrected machine-check errors (umc points at "
                  "memory, fabric at FCLK, VDDG or VSOC), VRAM or Xid errors, or a crash.",
                  _obj({"kind": {"type": "string", "enum": ["screen", "fabric", "tm5"]}, "minutes": {"type": "number"},

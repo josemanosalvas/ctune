@@ -7,6 +7,7 @@
 - **TM5**: TestMem5 with the anta777 Extreme1 profile under Proton; three cycles of it is the integralfx guide's minimum for a stable result. It runs as long as TM5 needs for the RAM it covers, and `minutes` only caps it. Install it once with `ctune mem tm5-setup`. Swap is off for TM5, so ask the user to close large apps first.
   - Inconclusive: the scope ran out of memory, or TM5 had not started testing after 5 min.
   - Red: TM5's log reports errors, or a TM5 message box stopped it mid-test (a worker that died); the result quotes the box.
+  - It stops at the first error: one makes the run red, so the rest of the cycles add nothing. TM5's window marks a failed test's cell red long before its log names it, so ctune watches a live screenshot, and `stopped_at_first_error` with the screenshot shows which test failed. The result then has no error total.
 - **memtest86+** needs a boot from USB, so ctune cannot run it. It adds coverage of the memory the running OS holds; offer it when the user wants a full-coverage pass.
 
 ## Reading a TM5 failure

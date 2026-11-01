@@ -22,6 +22,9 @@
 - ctune changes one value of the profile, the window per worker. It keeps anta777's 1408 MB when that fits in the
   free RAM and lowers it otherwise (the profile's own note says to fit it to the machine). Everything else, the test
   sequence, Time (%) 500 and 3 cycles, stays as published.
+- TM5 shows an error at once in its window, where the failed test's cell turns pure red, but its log often names no
+  error until the end. The helper saves a live PNG of the window every LIVE_S seconds, and ctune stops the run at the
+  first red pixel (or at a log line "Error in test"), because one error already makes the run red.
 - TM5 writes Log.txt next to TM5.exe and then waits in a dialog, so ctune reads the log and stops the scope at the
   final line: "Testing completed in 1:23.41, no errors." or "Testing is completed through 1:23.41, detected N
   error(s).". The final dialog says the same and is not a blocking box.
@@ -59,11 +62,19 @@ POLL_S = 5
 STOP_TIMEOUT = "15s"
 START_TIMEOUT_S = 300        # Proton starts in under a minute, and every worker locks its window before the log line
 AWE_BOX = "TestMem5, AWE module"
-# runs inside gamescope, so DISPLAY is its Xwayland; $1 is TM5.exe, $2 the title of the box to close, $3 the log and
-# $4 the screenshot to take of TM5's window once the log has its final line (the window shows the errors per test)
+# runs inside gamescope, so DISPLAY is its Xwayland; $1 is TM5.exe, $2 the title of the box to close, $3 the log,
+# $4 the screenshot to take of TM5's window once the log has its final line (the window shows the errors per test),
+# $5 the live screenshot it refreshes every $6 seconds
 DISMISS = r'''umu-run "$1" & p=$!
+n=0
 while kill -0 "$p" 2>/dev/null; do
   for w in $(xdotool search --onlyvisible --name "^$2\$" 2>/dev/null); do xdotool key --window "$w" Return 2>/dev/null; done
+  n=$((n + 2))
+  if [ "$n" -ge "$6" ]; then
+    n=0
+    w=$(xdotool search --onlyvisible --name "^TestMem5 v" 2>/dev/null | head -n 1)
+    [ -n "$w" ] && import -window "$w" "$5.part.png" 2>/dev/null && mv "$5.part.png" "$5"
+  fi
   if [ ! -e "$4" ] && [ ! -e "$4.failed" ] && grep -aqE "completed (in|through)" "$3" 2>/dev/null; then
     sleep 1
     w=$(xdotool search --onlyvisible --name "^TestMem5 v" 2>/dev/null | head -n 1)
@@ -74,6 +85,9 @@ while kill -0 "$p" 2>/dev/null; do
 done
 wait "$p"'''
 SHOT_WAIT_S = 20
+LIVE_S = 30                  # how often the helper refreshes the live screenshot
+RED = (255, 0, 0)            # TM5 paints a failed test's cell pure red; nothing else in its window uses it
+ERROR_LINE = re.compile(r"Error in test")
 
 # the log's own final lines, and the final dialog's text for logs that quote it
 DONE_OK = re.compile(r"Testing completed in [\d:.hms ]+, no errors|The testing is completed, of errors is not detected")
@@ -140,6 +154,16 @@ def blocking_boxes(out):
     return [t for t in texts if not t.startswith(("To enable AWE", "The testing is completed"))]
 
 
+def red_pixels(png):
+    """The pure red pixels in a TM5 window screenshot, 0 when it cannot be read: a failed test's cell is red."""
+    try:
+        from PIL import Image
+        with Image.open(png) as im:
+            return dict((c, n) for n, c in im.convert("RGB").getcolors(1 << 24)).get(RED, 0)
+    except Exception:
+        return 0
+
+
 def _read(path):
     try:
         with open(path, encoding="cp1251", errors="replace") as f:
@@ -160,13 +184,14 @@ class Load(stress.Load):
         self.cycles = cycles or (int(m.group(2)) if m else 3)
         self.scope = f"ctune-tm5-{time.strftime('%Y%m%d-%H%M%S')}-{os.getpid()}.scope"
         self.shot = os.path.join(DATA, "runs", self.scope.replace(".scope", ".png"))
+        self.live = self.shot.replace(".png", "-live.png")
         cmd = ["systemd-run", "--user", "--scope", "--quiet", f"--unit={self.scope}", "-p", "MemorySwapMax=0",
                "-p", f"RuntimeMaxSec={seconds + 300}", "-p", f"TimeoutStopSec={STOP_TIMEOUT}",
                "gamescope", "--backend", "headless", "-w", "640", "-h", "480", "--",
-               "sh", "-c", DISMISS, "sh", EXE, AWE_BOX, LOG, self.shot]
+               "sh", "-c", DISMISS, "sh", EXE, AWE_BOX, LOG, self.shot, self.live, str(LIVE_S)]
         super().__init__("tm5 (anta777 extreme)", cmd, None, cwd=DIR)
         self.ends_phase, self.completed, self.scope_result = True, False, None
-        self.no_start, self.boxes = False, []
+        self.no_start, self.boxes, self.first_error = False, [], None
 
     @property
     def tested_mb(self):
@@ -206,6 +231,17 @@ class Load(stress.Load):
                     time.sleep(1)
                 self._stop_scope()
                 return
+            if log["started"] and (ERROR_LINE.search(_read(LOG)) or red_pixels(self.live)):
+                self.first_error = time.time() - t0
+                # a log line can come before the live screenshot shows the red cell: wait for one fresh shot
+                seen, deadline = time.time(), time.time() + LIVE_S + 10
+                while self.alive() and time.time() < deadline and not (
+                        red_pixels(self.live) and os.path.getmtime(self.live) >= seen):
+                    time.sleep(1)
+                if os.path.exists(self.live):
+                    os.replace(self.live, self.shot)
+                self._stop_scope()
+                return
             self.boxes = blocking_boxes("".join(getattr(self, "_chunks", [])))
             self.no_start = not log["started"] and time.time() - t0 > START_TIMEOUT_S
             if self.boxes or self.no_start:
@@ -223,6 +259,11 @@ class Load(stress.Load):
         if self.alive():
             self.stopped = True
             self._stop_scope()
+        self._drop_live()   # a stop skips result(), so the live screenshot goes here
+
+    def _drop_live(self):
+        if os.path.exists(self.live):
+            os.remove(self.live)
 
     def result(self):
         if self.proc is None:
@@ -239,14 +280,19 @@ class Load(stress.Load):
         log = parse_log(_read(LOG))
         out = self.out or "".join(getattr(self, "_chunks", []))
         boxes = blocking_boxes(out)
+        self._drop_live()
         r = {"name": self.name, "rc": self.proc.returncode, "threads": self.threads, "window_mb": self.window,
-             "cycles": self.cycles,
+             "cycles": self.cycles, "stopped_at_first_error": self.first_error is not None,
              "tested_mb": self.tested_mb, **log, "message_boxes": boxes,
              "screenshot": self.shot if os.path.exists(self.shot) else None}
         r["ok"] = log["completed"] and log["errors_reported"] == 0 and not log["fatal"]
         if r["ok"]:
             return r
-        if log["errors_reported"]:
+        if self.first_error is not None:
+            m, sec = divmod(int(self.first_error), 60)
+            r["errors"].insert(0, f"TM5 showed its first error about {m}m {sec:02d}s after the start, so ctune stopped "
+                                  "it there (the screenshot marks the failed test's cell red)")
+        elif log["errors_reported"]:
             r["errors"].insert(0, f"TM5 reported {log['errors_reported']} errors")
         elif oom:
             r["unavailable"] = True
