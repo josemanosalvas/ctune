@@ -125,7 +125,7 @@ class EndsPhase(unittest.TestCase):
 
 
 class LoadResult(unittest.TestCase):
-    def _load(self, log, stopped=False, rc=0, unit=None, out="wine: something\n", no_start=False):
+    def _load(self, log, stopped=False, rc=0, unit=None, out="wine: something\n", no_start=False, first_error=None):
         with tempfile.TemporaryDirectory() as d:
             prof = os.path.join(d, "p.cfg")
             with open(prof, "w") as f:
@@ -134,7 +134,7 @@ class LoadResult(unittest.TestCase):
                 ld = tm5.Load(32000, 60, threads=16)
         ld.proc = mock.Mock(returncode=rc)
         ld._reader = mock.Mock()
-        ld.stopped, ld.out, ld.no_start = stopped, out, no_start
+        ld.stopped, ld.out, ld.no_start, ld.first_error = stopped, out, no_start, first_error
         with mock.patch.object(tm5, "_read", return_value=log), \
                 mock.patch.object(stress, "unit_state", return_value=unit or {}):
             return ld.result()
@@ -149,6 +149,13 @@ class LoadResult(unittest.TestCase):
         self.assertFalse(r["ok"])
         self.assertFalse(r.get("unavailable"))
         self.assertIn("2 errors", r["errors"][0])
+
+    def test_red_at_the_first_error(self):
+        r = self._load(HEAD, first_error=95)
+        self.assertFalse(r["ok"])
+        self.assertFalse(r.get("unavailable"))
+        self.assertTrue(r["stopped_at_first_error"])
+        self.assertIn("first error about 1m 35s", r["errors"][0])
 
     def test_never_started_is_unavailable(self):
         r = self._load("", rc=1)
@@ -184,6 +191,41 @@ class LoadResult(unittest.TestCase):
         r = self._load(HEAD, stopped=True)
         self.assertFalse(r["ok"])
         self.assertFalse(r.get("unavailable"))
+
+
+class RedCell(unittest.TestCase):
+    def _png(self, d, red):
+        from PIL import Image
+        im = Image.new("RGB", (40, 20), (200, 200, 200))
+        for x in range(red):
+            im.putpixel((x, 5), (255, 0, 0))
+        im.putpixel((30, 5), (0, 120, 215))   # the running test's blue cell
+        path = os.path.join(d, "w.png")
+        im.save(path)
+        return path
+
+    def test_counts_only_pure_red(self):
+        with tempfile.TemporaryDirectory() as d:
+            self.assertEqual(tm5.red_pixels(self._png(d, 0)), 0)
+            self.assertEqual(tm5.red_pixels(self._png(d, 7)), 7)
+
+    def test_missing_screenshot_is_no_error(self):
+        self.assertEqual(tm5.red_pixels("/nonexistent/w.png"), 0)
+
+
+class LiveShot(unittest.TestCase):
+    def test_a_stop_deletes_the_live_screenshot(self):
+        with tempfile.TemporaryDirectory() as d:
+            prof = os.path.join(d, "p.cfg")
+            with open(prof, "w") as f:
+                f.write(PROFILE)
+            with mock.patch.object(tm5, "PROFILE", prof):
+                ld = tm5.Load(32000, 60, threads=16)
+            ld.live = os.path.join(d, "w-live.png")
+            open(ld.live, "w").close()
+            with mock.patch.object(ld, "alive", return_value=False):
+                ld.signal_stop()
+            self.assertFalse(os.path.exists(ld.live))
 
 
 class Stop(unittest.TestCase):
