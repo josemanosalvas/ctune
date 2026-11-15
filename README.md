@@ -89,12 +89,13 @@ A Ryzen 7 5800X3D on a Gigabyte B550 AORUS PRO with 4 × 8 GB of Samsung B-die a
 
 ## Getting started
 
-ctune needs Python 3 and nothing from PyPI. It also needs the `ryzen_smu` kernel module, the NVIDIA proprietary driver, podman and polkit. TestMem5 runs through umu-run with xdotool, and Quake II RTX runs inside gamescope. Bazzite ships all three.
+The `ctune` command needs Python 3 and nothing from PyPI. Only the MCP server has a dependency, the official MCP Python SDK, and it gets its own virtual environment. ctune also needs the `ryzen_smu` kernel module, the NVIDIA proprietary driver, podman and polkit. TestMem5 runs through umu-run with xdotool, and Quake II RTX runs inside gamescope. Bazzite ships all three.
 
 ```bash
 git clone https://github.com/josemanosalvas/ctune && cd ctune
 bin/ctune status          # memory, CPU and GPU status, sensors, error counters, journal tail
 bin/ctune passwordless    # optional: one prompt, then the root helpers run unattended
+bin/ctune mcp-setup       # for an agent: the MCP server's virtual environment, with the SDK pinned by hash
 ```
 
 The test tools live in `tools/`, which git ignores. ctune installs most of them itself, with pinned hashes or commits:
@@ -110,18 +111,19 @@ The test tools live in `tools/`, which git ignores. ctune installs most of them 
 | [Unigine](https://benchmark.unigine.com) Superposition and Heaven | Raster and tessellation loads | `ctune gpu unigine-setup` |
 | [memtest_vulkan](https://github.com/GpuZelenograd/memtest_vulkan) | VRAM test, and the heat load in RAM tests | GitHub release |
 | [nvidia_oc](https://github.com/Dreaming-Codes/nvidia_oc) | Re-applies signed-off GPU settings at boot | `ctune gpu persist-setup` |
+| [MCP Python SDK](https://github.com/modelcontextprotocol/python-sdk) | The server the agent calls ctune through | `ctune mcp-setup` |
 
 TestMem5, mprime and the Unigine benchmarks do not allow redistribution, so never commit them. [docs/research/reuse-tools.md](docs/research/reuse-tools.md) and [docs/research/gpu-graphics-loads.md](docs/research/gpu-graphics-loads.md) explain each choice.
 
 ### With an agent
 
-Open the repository in Claude Code. `.mcp.json` registers the ctune MCP server, which exposes the same commands as tools, and three skills run the campaigns:
+Run `bin/ctune mcp-setup` once, then open the repository in Claude Code. `.mcp.json` registers the ctune MCP server, which exposes the same commands as tools and checks every argument before a command runs. Three skills run the campaigns:
 
 - `ctune-mem` for memory timings, FCLK and voltages
 - `ctune-cpu` for the Curve Optimizer
 - `ctune-gpu` for the undervolt, the offsets and the power limit
 
-The skills share one frame, [.claude/ctune/campaign.md](.claude/ctune/campaign.md), which defines the journal, the verdicts and what to do after a crash. The agent keeps what it learns about your machine in `data/this-machine.md`. To use the server from another project, run `claude mcp add ctune -- python3 -I <repo>/ctune/mcp_server.py`.
+The skills share one frame, [.claude/ctune/campaign.md](.claude/ctune/campaign.md), which defines the journal, the verdicts and what to do after a crash. The agent keeps what it learns about your machine in `data/this-machine.md`. To use the server from another project, run `claude mcp add ctune -- <repo>/bin/ctune-mcp`.
 
 ### By hand
 
@@ -186,10 +188,10 @@ Other boards need their own decoder keys for the BIOS menus. ctune detects Zen 4
 
 - `ctune/core/`: the journal, machine-check counters, sensors, the test runner and the sign-off suite
 - `ctune/mem/`, `ctune/cpu/`, `ctune/gpu/`: one package per domain, each with its guarded root helper
-- `ctune/mcp_server.py`: the MCP server, standard library only
+- `ctune/mcp_server.py`: the MCP server, on the official MCP Python SDK. `bin/ctune-mcp` starts it.
 - `.claude/`: the skills and the campaign frame
 - `docs/`: [design notes](docs/design.md) and [research notes](docs/research/) with their sources
-- `tests/`: offline tests, `python3 -B -m unittest discover -s tests`
+- `tests/`: offline tests, `python3 -B -m unittest discover -s tests`. The MCP server's tests need its SDK: `tools/mcp-venv/bin/python -B -m unittest discover -s tests -p "test_mcp*.py"`.
 - `data/` (ignored, or `$CTUNE_DATA`): snapshots, the journal and `this-machine.md`
 
 `python3 docs/figures/build.py` redraws the figures on this page, and `python3 docs/brand/build.py` the logo.

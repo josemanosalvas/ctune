@@ -219,25 +219,6 @@ class ReviewRegressions(unittest.TestCase):
         with self.assertRaises(ValueError):
             cpu.test([0], seconds_per_core=30, workload="sse-huge")
 
-    def test_detached_start_passes_the_tests_own_kind(self):
-        """mem_test and gpu_test take a `kind` argument, which must not collide with the runner's own."""
-        import json
-        from unittest import mock
-        from ctune import mcp_server
-        from ctune.core import runner
-        failed = mock.Mock(returncode=1, stderr="stubbed")
-        with mock.patch.object(stress, "check_interrupted"), mock.patch.object(stress, "running", return_value=None), \
-                mock.patch.object(runner, "units", return_value=[]), \
-                mock.patch.object(runner.subprocess, "run", return_value=failed) as run:
-            with self.assertRaisesRegex(RuntimeError, "systemd-run failed"):
-                mcp_server._run("mem_test", None, True, kind="fabric", minutes=None)
-        spec = json.loads(run.call_args.args[0][-1])
-        self.assertEqual(spec, {"kind": "mem_test", "kwargs": {"kind": "fabric", "minutes": None}})
-        self.assertIn(f"--setenv=CTUNE_DATA={stress.DATA}", run.call_args.args[0])   # the unit writes where we read
-        inline = mock.Mock(return_value="ran")
-        self.assertEqual(mcp_server._run("gpu_test", inline, False, kind="core"), "ran")
-        inline.assert_called_once_with(kind="core")
-
     def test_a_test_blocks_sleep_and_flags_one_that_happens_anyway(self):
         """A suspend pauses the loads while the test's timer keeps counting: a test that slept must not report green."""
         import subprocess

@@ -2,7 +2,7 @@
   "mcpServers": {
     "ctune": {
       "command": "sh",
-      "args": ["-c", "exec python3 -I \"$CLAUDE_PROJECT_DIR/ctune/mcp_server.py\""]
+      "args": ["-c", "exec \"$CLAUDE_PROJECT_DIR/bin/ctune-mcp\""]
     }
   }
 }
