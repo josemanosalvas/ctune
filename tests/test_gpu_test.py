@@ -40,13 +40,6 @@ class Defaults(unittest.TestCase):
         fan noise; temp_c_end averages its last minute, which needs several minutes of warm-up first."""
         self.assertGreaterEqual(DEFAULTS["fp64_seconds"], 600)
 
-    def test_mcp_passes_only_what_the_caller_gave(self):
-        from ctune import mcp_server
-        with mock.patch.object(mcp_server, "_run") as run:
-            mcp_server.TOOLS["gpu_test"][2]({"tc_seconds": 300})
-        self.assertEqual(run.call_args.args[:3], ("gpu_test", gpu.test, True))
-        self.assertEqual(run.call_args.kwargs, {"tc_seconds": 300})
-
     def test_cli_passes_only_what_the_caller_gave(self):
         from ctune import cli
         with mock.patch.object(cli.gpu, "test", return_value={}) as test, mock.patch.object(cli, "_out"):

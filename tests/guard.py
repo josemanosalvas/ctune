@@ -3,8 +3,10 @@
 A unit test that reached gpu.test for real could start podman beside a campaign's running gpu-burn container and
 replace it. Any such command raises before it starts; a test that needs one mocks it.
 """
+import importlib.util
 import os
 import subprocess
+import unittest
 
 # not ctune.core.paths: importing it here would fix DATA before a test module sets CTUNE_DATA
 TOOLS = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "tools")
@@ -27,3 +29,7 @@ class _Guarded(subprocess.Popen):
 
 
 subprocess.Popen = _Guarded
+
+# The MCP server imports its SDK, which lives in tools/mcp-venv and not in the system Python.
+needs_mcp_sdk = unittest.skipUnless(importlib.util.find_spec("mcp"),
+                                    "needs the MCP SDK: run the tests with tools/mcp-venv/bin/python")

@@ -142,6 +142,8 @@ def build():
     s = sub.add_parser("passwordless", help="let GPU apply and reset, CPU probe, apply and reset, and RAM snapshots run without a "
                                             "password, through root-owned helpers and a polkit rule for this user (one prompt)")
     s.add_argument("--remove", action="store_true")
+    sub.add_parser("mcp-setup", help="create the MCP server's virtual environment with the official MCP Python SDK "
+                                     "(versions and SHA256 pinned, about 60 MB on disk)")
     s = sub.add_parser("signoff", help="multi-hour suite: ram, tm5, ycruncher, cpu, cpu_heavy, gpu, combined, idle "
                                        "(about 5 h 30 min plus TM5)")
     s.add_argument("--phases", help=f"comma-separated subset of {','.join(signoff.PHASES)}")
@@ -268,6 +270,9 @@ def _main(a):
     elif a.cmd == "passwordless":
         from ctune.gpu import persist
         _out(persist.passwordless(a.remove))
+    elif a.cmd == "mcp-setup":
+        from ctune import mcp_setup
+        _out(mcp_setup.setup())
     elif a.cmd == "signoff":
         kw = {"phases": a.phases.split(",") if a.phases else None, "keep_going": a.keep_going, "note": a.note,
               "mb": a.mb,

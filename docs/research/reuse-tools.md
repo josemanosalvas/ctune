@@ -1,4 +1,4 @@
-# Reusing standard tools: mprime, systemd-run, gpu-burn
+# Reusing standard tools: mprime, systemd-run, gpu-burn, the MCP SDK
 
 This note lists the facts the code relies on, with their sources. [design.md](../design.md) has the design decisions built on them.
 
@@ -80,3 +80,17 @@ These settings were checked against the systemd 259.9 man pages and against prob
 - **Pausing for load transients.** ctune freezes the container with `podman pause` (the cgroup freezer). Rootless, the freeze takes about 25 ms, and a signal sent while the container is frozen arrives right after the thaw. A worker keeps two batches in flight (`gpu_burn-drv.cpp` L353-367), so the GPU idles only after both finish. At 8 GiB an FP32 batch takes about 1.2 s, so the transient run uses 1 GiB: two compared slots, about 0.1 s per batch. Sampled at 5 Hz, the GPU fell to 2 % utilisation and about 120 W instantaneous in each 1 s pause, with the clock at the lock. Each thaw brought it back to about 400 W at that clock.
 - **Name clashes.** gpu-burn runs without `--replace`, so a run from another data directory cannot replace a running container. A run refuses to start beside a running or paused `ctune-gpu-burn`, and removes a stopped one that a crash left behind. Every later podman call names the run's container ID (`--cidfile`).
 - Tune the core with the memory offset at 0, because gpu-burn's result buffers are in VRAM.
+
+## The MCP Python SDK, the agent interface
+These facts were checked against the source of `mcp` 2.3.0 from PyPI and against a server running on Bazzite (Fedora 44, Python 3.15):
+- **The server class.** `MCPServer` in `mcp.server.mcpserver` builds each tool's input schema from the function's signature and validates the arguments before the call. It is the class SDK 1 called `FastMCP`. The stdio transport reads and writes one JSON message per line.
+- **Where a tool runs.** The SDK runs a plain function on a worker thread (`FuncMetadata.call_fn`) and awaits a coroutine on the main thread. Python delivers a signal to the main thread only, so a signal never reaches a tool on a worker thread. ctune registers each tool as a coroutine that calls the function directly. A signal from the client then raises in the running test, whose `finally` stops its loads.
+  - After a KeyboardInterrupt the server process stays alive for as long as the client holds its stdin open. ctune therefore exits with `os._exit` once the call has unwound.
+  - Outside a call the signals keep their default action, so the client stops an idle server at once.
+- **Unknown arguments.** The SDK's argument model ignores them, the pydantic default. A misspelt argument would then run the tool with its default. ctune sets `extra` to `forbid` on each model and publishes the schema that results, with `additionalProperties` false.
+- **Errors.** Only a `ToolError` keeps its text. Any other exception reaches the client as `Error executing tool <name>` with nothing after it. ctune raises its own exceptions again as `ToolError`, so a guardrail's refusal reaches the agent with its reason.
+- **Descriptions and results.** The SDK takes a docstring as it is written, line breaks and indentation included, so ctune joins it into one line. It serialises a result that is not a string with an indent of 2; ctune returns its own JSON text.
+- **The environment.** `python3 -I` on a virtual environment's Python still loads that environment's packages. It leaves out the user's site-packages and the `PYTHON*` variables.
+  - Bazzite's system Python is read-only, so the SDK lives in `tools/mcp-venv`.
+  - `requirements-mcp.txt` holds the SDK and its 29 dependencies with a SHA256 for every file. `uv pip compile requirements-mcp.in --universal --python-version 3.11 --generate-hashes --no-annotate -o requirements-mcp.txt` writes it.
+  - `pip install --require-hashes --only-binary :all:` refuses a file whose hash is not listed and never runs a package's build code.
